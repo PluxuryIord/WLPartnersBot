@@ -264,6 +264,19 @@ async def existing_partner(call: CallbackQuery):
 
 
 async def new_partner(call: CallbackQuery):
+    await call.message.edit_caption(
+        caption='<b>Чтобы стать партнёром — необходимо пройти регистрацию на '
+                '<a href="https://partners.winline.ru">платформе</a>. '
+                'Бот поможет пройти все необходимые шаги</b>',
+        reply_markup=kb_client_menu.registration_partners_menu)
+    await call.answer()
+
+
+async def already_registered(call: CallbackQuery):
+    await call.answer('🔧 Функционал в разработке', show_alert=True)
+
+
+async def reg_help(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
 
@@ -284,6 +297,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(back_menu, F.data == 'client_back_menu')
     dp.callback_query.register(existing_partner, F.data == 'client_existing_partner')
     dp.callback_query.register(new_partner, F.data == 'client_new_partner')
+    dp.callback_query.register(already_registered, F.data == 'client_already_registered')
+    dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)

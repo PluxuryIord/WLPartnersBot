@@ -27,6 +27,13 @@ start_menu = create_inline([
     ['Я уже являюсь партнёром', 'call', 'client_existing_partner'],
     ['Регистрация партнёров', 'call', 'client_new_partner'],
 ], 1)
+
+registration_partners_menu = create_inline([
+    ['Пройти регистрацию', 'url', 'https://partners.winline.ru'],
+    ['Я уже зарегистрирован', 'call', 'client_already_registered'],
+    ['Помощь', 'call', 'client_reg_help'],
+], 1)
+
 delete_message = kb_delete_message
 
 back_menu = create_inline([['🔙 Меню', 'call', 'client_back_menu']], 1)
