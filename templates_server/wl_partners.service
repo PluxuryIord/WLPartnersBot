@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram bot
+After=syslog.target
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/WLPartners/
+ExecStart=/WLPartners/bot/venv/bin/python3 -m main
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
