@@ -259,6 +259,15 @@ async def wait_traff(call: CallbackQuery, state: FSMContext):
                                  'чтобы получить мерч!</b>', reply_markup=kb_client_menu.subscribe)
 
 
+async def back_to_start(call: CallbackQuery):
+    await call.message.edit_caption(
+        caption='<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>',
+        reply_markup=kb_client_menu.start_menu)
+    await call.answer()
+
+
 async def show_auth_screen(call: CallbackQuery):
     await call.message.edit_caption(
         caption='<b>Для доступа к функционалу бота необходимо авторизоваться '
@@ -314,6 +323,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(telegram.delete_message, F.data == 'client_delete_message')
     dp.callback_query.register(back_menu, F.data == 'client_back_menu')
+    dp.callback_query.register(back_to_start, F.data == 'client_back_to_start')
     dp.callback_query.register(existing_partner, F.data == 'client_existing_partner')
     dp.callback_query.register(new_partner, F.data == 'client_new_partner')
     dp.callback_query.register(already_registered, F.data == 'client_already_registered')

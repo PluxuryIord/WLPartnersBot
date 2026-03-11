@@ -32,10 +32,12 @@ registration_partners_menu = create_inline([
     ['Пройти регистрацию', 'url', 'https://partners.winline.ru'],
     ['Я уже зарегистрирован', 'call', 'client_already_registered'],
     ['Помощь', 'call', 'client_reg_help'],
+    ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
 auth_menu = create_inline([
     ['Авторизоваться по почте', 'call', 'client_auth_email'],
+    ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
 authorized_menu = create_inline([
@@ -45,6 +47,7 @@ authorized_menu = create_inline([
     ['Актуальные промо и ссылки', 'call', 'client_promo'],
     ['Чат с менеджером', 'call', 'client_chat_manager'],
     ['Я на мероприятии!', 'call', 'client_at_event'],
+    ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
 delete_message = kb_delete_message
