@@ -259,8 +259,16 @@ async def wait_traff(call: CallbackQuery, state: FSMContext):
                                  'чтобы получить мерч!</b>', reply_markup=kb_client_menu.subscribe)
 
 
+async def show_auth_screen(call: CallbackQuery):
+    await call.message.edit_caption(
+        caption='<b>Для доступа к функционалу бота необходимо авторизоваться '
+                'с помощью почты, указанной при регистрации на платформе</b>',
+        reply_markup=kb_client_menu.auth_menu)
+    await call.answer()
+
+
 async def existing_partner(call: CallbackQuery):
-    await call.answer('🔧 Функционал в разработке', show_alert=True)
+    await show_auth_screen(call)
 
 
 async def new_partner(call: CallbackQuery):
@@ -273,6 +281,17 @@ async def new_partner(call: CallbackQuery):
 
 
 async def already_registered(call: CallbackQuery):
+    await show_auth_screen(call)
+
+
+async def auth_email(call: CallbackQuery):
+    await call.message.edit_caption(
+        caption='<b>Текст для авторизированных пользователей</b>',
+        reply_markup=kb_client_menu.authorized_menu)
+    await call.answer()
+
+
+async def authorized_stub(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
 
@@ -298,6 +317,13 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(existing_partner, F.data == 'client_existing_partner')
     dp.callback_query.register(new_partner, F.data == 'client_new_partner')
     dp.callback_query.register(already_registered, F.data == 'client_already_registered')
+    dp.callback_query.register(auth_email, F.data == 'client_auth_email')
+    dp.callback_query.register(authorized_stub, F.data == 'client_knowledge_base')
+    dp.callback_query.register(authorized_stub, F.data == 'client_offers')
+    dp.callback_query.register(authorized_stub, F.data == 'client_socials')
+    dp.callback_query.register(authorized_stub, F.data == 'client_promo')
+    dp.callback_query.register(authorized_stub, F.data == 'client_chat_manager')
+    dp.callback_query.register(authorized_stub, F.data == 'client_at_event')
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')

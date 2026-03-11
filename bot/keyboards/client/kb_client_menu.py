@@ -34,6 +34,19 @@ registration_partners_menu = create_inline([
     ['Помощь', 'call', 'client_reg_help'],
 ], 1)
 
+auth_menu = create_inline([
+    ['Авторизоваться по почте', 'call', 'client_auth_email'],
+], 1)
+
+authorized_menu = create_inline([
+    ['База знаний', 'call', 'client_knowledge_base'],
+    ['Офферы', 'call', 'client_offers'],
+    ['Социальные сети', 'call', 'client_socials'],
+    ['Актуальные промо и ссылки', 'call', 'client_promo'],
+    ['Чат с менеджером', 'call', 'client_chat_manager'],
+    ['Я на мероприятии!', 'call', 'client_at_event'],
+], 1)
+
 delete_message = kb_delete_message
 
 back_menu = create_inline([['🔙 Меню', 'call', 'client_back_menu']], 1)
