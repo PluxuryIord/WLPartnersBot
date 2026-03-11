@@ -22,6 +22,11 @@ def main_menu(admin: bool, show_qr: bool = False, info: bool = False):
 
 
 registration_button = create_inline([['Зарегистрироваться', 'call', 'client_registration']], 1)
+
+start_menu = create_inline([
+    ['Я уже являюсь партнёром', 'call', 'client_existing_partner'],
+    ['Регистрация партнёров', 'call', 'client_new_partner'],
+], 1)
 delete_message = kb_delete_message
 
 back_menu = create_inline([['🔙 Меню', 'call', 'client_back_menu']], 1)

@@ -75,10 +75,12 @@ async def main_menu(update: Union[Message, CallbackQuery],
         DB.User.add(user.id, update.from_user.full_name, user.username, thread_id)
         if config.admin_filter.is_system(user.id):
             config.admin_filter.add_admin(user.id, 0, admin_access.full_admin_access)
-        kb = kb_client_menu.registration_button
+        kb = kb_client_menu.start_menu
         await wait_registration.delete()
         new_menu_id = await wait_registration.answer_photo(
-            caption=bot_texts.menu['registration'],
+            caption='<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                    'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                    'актуальные новости и предложения, а также участвовать в мероприятиях!</b>',
             photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
             reply_markup=kb)
         count_users = len(DB.User.select(all_scalars=True))
@@ -134,10 +136,12 @@ async def main_menu(update: Union[Message, CallbackQuery],
                         chat_id=user.id, text=f'<b>Это - {link}, наш Affiliate менеджер. Напиши ему!)</b>',
                         reply_markup=kb_client_menu.pm)
                 else:
-                    kb = kb_client_menu.registration_button
+                    kb = kb_client_menu.start_menu
                     new_menu_id = await bot.send_photo(
                         chat_id=user.id,
-                        caption=bot_texts.menu['registration'],
+                        caption='<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                                'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>',
                         photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
                         reply_markup=kb)
     if not alert:
@@ -255,6 +259,14 @@ async def wait_traff(call: CallbackQuery, state: FSMContext):
                                  'чтобы получить мерч!</b>', reply_markup=kb_client_menu.subscribe)
 
 
+async def existing_partner(call: CallbackQuery):
+    await call.answer('🔧 Функционал в разработке', show_alert=True)
+
+
+async def new_partner(call: CallbackQuery):
+    await call.answer('🔧 Функционал в разработке', show_alert=True)
+
+
 async def wait_about_role(message: Message, state: FSMContext):
     await message.delete()
     data = await state.get_data()
@@ -270,6 +282,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(telegram.delete_message, F.data == 'client_delete_message')
     dp.callback_query.register(back_menu, F.data == 'client_back_menu')
+    dp.callback_query.register(existing_partner, F.data == 'client_existing_partner')
+    dp.callback_query.register(new_partner, F.data == 'client_new_partner')
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
