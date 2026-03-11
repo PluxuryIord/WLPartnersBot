@@ -29,6 +29,7 @@ bot_info = create_inline(
         ['⛔️ Количество блокировок', 'call', 'admin_ban_count'],
         ['💬 Количество действий (сегодня)', 'call', 'admin_today_events'],
         ['🕹 Технические работы(вкл/выкл)', 'call', 'admin_tech_work'],
+        ['📅 Режим мероприятия(вкл/выкл)', 'call', 'admin_event_mode'],
         ['📤 Выгрузить список пользователей', 'call', 'admin_export_users'],
         ['🔙 Меню администратора', 'call', 'admin_menu']
     ], 1)

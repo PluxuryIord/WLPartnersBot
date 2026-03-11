@@ -40,6 +40,10 @@ auth_menu = create_inline([
     ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
+event_menu = create_inline([
+    ['Заполнить анкету', 'call', 'client_registration'],
+], 1)
+
 authorized_menu = create_inline([
     ['База знаний', 'call', 'client_knowledge_base'],
     ['Офферы', 'call', 'client_offers'],

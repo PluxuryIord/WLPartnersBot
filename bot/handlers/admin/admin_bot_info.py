@@ -192,6 +192,15 @@ async def admin_events(call: CallbackQuery):
                                  reply_markup=kb_admin_menu.back_to_bot_info)
 
 
+async def toggle_event_mode(call: CallbackQuery):
+    settings = DB.Settings.select()
+    new_state = not settings.event_starts
+    DB.Settings.update(event_starts=new_state)
+    status = '✅ Включён' if new_state else '❌ Выключен'
+    await call.answer(f'📅 Режим мероприятия: {status}', show_alert=True)
+    await admin_bot_info(call)
+
+
 def register_handlers_admin_bot_info(dp: Dispatcher):
     dp.callback_query.register(export_users, F.data == "admin_export_users", config.admin_filter)
     dp.callback_query.register(export_to_txt, F.data == "admin_users_to_txt", config.admin_filter)
@@ -199,3 +208,4 @@ def register_handlers_admin_bot_info(dp: Dispatcher):
     dp.callback_query.register(admin_bot_info, F.data == "admin_bot_info", config.admin_filter)
     dp.callback_query.register(ban_count, F.data == "admin_ban_count", config.admin_filter)
     dp.callback_query.register(admin_events, F.data == "admin_today_events", config.admin_filter)
+    dp.callback_query.register(toggle_event_mode, F.data == "admin_event_mode", config.admin_filter)

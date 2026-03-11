@@ -38,6 +38,7 @@ from bot.initialization import admin_access, config
 from bot.initialization import bot_texts
 from aiogram.types import FSInputFile
 from aiogram.enums import ContentType, ChatMemberStatus
+import os
 
 
 async def start_message(first_name, user_id):
@@ -75,12 +76,17 @@ async def main_menu(update: Union[Message, CallbackQuery],
         DB.User.add(user.id, update.from_user.full_name, user.username, thread_id)
         if config.admin_filter.is_system(user.id):
             config.admin_filter.add_admin(user.id, 0, admin_access.full_admin_access)
-        kb = kb_client_menu.start_menu
+        if DB.Settings.select().event_starts:
+            kb = kb_client_menu.event_menu
+            caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
+        else:
+            kb = kb_client_menu.start_menu
+            caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                           'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                           'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
         await wait_registration.delete()
         new_menu_id = await wait_registration.answer_photo(
-            caption='<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
-                    'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
-                    'актуальные новости и предложения, а также участвовать в мероприятиях!</b>',
+            caption=caption_text,
             photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
             reply_markup=kb)
         count_users = len(DB.User.select(all_scalars=True))
@@ -127,21 +133,32 @@ async def main_menu(update: Union[Message, CallbackQuery],
                         qr_color="#FF6914"
                     )
                     await new_prize(str(update.from_user.id), 'Мерч', str(qr_id))
-                    if user_data.role == 'Рекламодатель':
+                    if DB.Settings.select().event_starts:
+                        new_menu_id = await bot.send_photo(
+                            chat_id=user.id,
+                            photo=FSInputFile(f"files/{update.from_user.id}.png"),
+                            caption='<b>Вот ваш QR для получения подарка!</b>'
+                        )
+                    elif user_data.role == 'Рекламодатель':
                         user_data = DB.User.select(update.from_user.id)
                         return await main_menu(update, update.from_user, user_data, state)
-
-                    link = hlink('@winline_affiliate', 'https://t.me/m/hcj7_tDRMmEy')
-                    new_menu_id = await bot.send_message(
-                        chat_id=user.id, text=f'<b>Это - {link}, наш Affiliate менеджер. Напиши ему!)</b>',
-                        reply_markup=kb_client_menu.pm)
+                    else:
+                        link = hlink('@winline_affiliate', 'https://t.me/m/hcj7_tDRMmEy')
+                        new_menu_id = await bot.send_message(
+                            chat_id=user.id, text=f'<b>Это - {link}, наш Affiliate менеджер. Напиши ему!)</b>',
+                            reply_markup=kb_client_menu.pm)
                 else:
-                    kb = kb_client_menu.start_menu
+                    if DB.Settings.select().event_starts:
+                        kb = kb_client_menu.event_menu
+                        caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
+                    else:
+                        kb = kb_client_menu.start_menu
+                        caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                                       'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                                       'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
                     new_menu_id = await bot.send_photo(
                         chat_id=user.id,
-                        caption='<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
-                                'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
-                                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>',
+                        caption=caption_text,
                         photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
                         reply_markup=kb)
     if not alert:
@@ -198,6 +215,20 @@ async def subscribe(call: CallbackQuery, user_data: DB.User, state: FSMContext):
         qr_color="#FF6914"
     )
     await new_prize(str(call.from_user.id), 'Мерч', str(qr_id))
+
+    if DB.Settings.select().event_starts:
+        try:
+            await call.message.delete()
+        except TelegramAPIError:
+            ...
+        new_menu = await bot.send_photo(
+            chat_id=call.from_user.id,
+            photo=FSInputFile(f"files/{call.from_user.id}.png"),
+            caption='<b>Вот ваш QR для получения подарка!</b>'
+        )
+        DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+        return
+
     if user_data.role == 'Рекламодатель':
         return await main_menu(call, call.from_user, user_data, state)
 
@@ -304,6 +335,36 @@ async def authorized_stub(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
 
+async def at_event(call: CallbackQuery):
+    settings = DB.Settings.select()
+    if not settings.event_starts:
+        return await call.answer('Сейчас нет активных мероприятий', show_alert=True)
+
+    qr_path = f"files/{call.from_user.id}.png"
+    if not os.path.exists(qr_path):
+        qr_id = DB.QRCode.add(call.from_user.id, "Мерч")
+        await generate_qr_on_template(
+            template_path="merch.png",
+            qr_data=f"{qr_id}",
+            output_path=qr_path,
+            qr_size=450,
+            qr_position=(43, 130),
+            qr_color="#FF6914"
+        )
+        await new_prize(str(call.from_user.id), 'Мерч', str(qr_id))
+
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    new_menu = await bot.send_photo(
+        chat_id=call.from_user.id,
+        photo=FSInputFile(qr_path),
+        caption='<b>Вот ваш QR для получения подарка!</b>'
+    )
+    DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+
+
 async def reg_help(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
@@ -333,7 +394,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(authorized_stub, F.data == 'client_socials')
     dp.callback_query.register(authorized_stub, F.data == 'client_promo')
     dp.callback_query.register(authorized_stub, F.data == 'client_chat_manager')
-    dp.callback_query.register(authorized_stub, F.data == 'client_at_event')
+    dp.callback_query.register(at_event, F.data == 'client_at_event')
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
