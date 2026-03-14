@@ -26,6 +26,7 @@ from aiogram.types import InputMediaPhoto, InputMediaDocument, InputMediaAnimati
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
+from aiogram.types import WebAppInfo
 from aiogram.utils.markdown import hlink
 from aiogram.exceptions import TelegramAPIError
 
@@ -71,6 +72,8 @@ def repack_keyboard(buttons: list):
             repack_buttons.append([InlineKeyboardButton(text=button[0], url=button[2])])
         elif button[1] == 'inline':
             repack_buttons.append([InlineKeyboardButton(text=button[0], switch_inline_query_current_chat=button[2])])
+        elif button[1] == 'web_app':
+            repack_buttons.append([InlineKeyboardButton(text=button[0], web_app=WebAppInfo(url=button[2]))])
     return repack_buttons
 
 

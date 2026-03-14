@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from .models.main_base import User, Admin, Alert, AdminNotification, Randomizer
 from .models.main_base import TopicMessages, ForwardTopicMessages, Settings, Texts, Support, Winner, QRCode
+from .models.main_base import UserAuth
 from sqlalchemy import or_, and_, not_, null
 
 
@@ -25,6 +26,7 @@ class DB:
     Winner = Winner
     QRCode = QRCode
     Randomizer = Randomizer
+    UserAuth = UserAuth
 
     sql_or = or_
     sql_and = and_

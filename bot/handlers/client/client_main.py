@@ -13,7 +13,7 @@ from aiogram.utils.markdown import hlink
 
 import bot.keyboards.admin.kb_admin_topic
 from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize
-from bot.states.wait_question import FsmRegistration, FsmAuth
+from bot.states.wait_question import FsmRegistration
 from bot.utils.qr_code import generate_qr_on_template
 
 if TYPE_CHECKING:
@@ -39,7 +39,6 @@ from bot.initialization import bot_texts
 from aiogram.types import FSInputFile
 from aiogram.enums import ContentType, ChatMemberStatus
 import os
-import re
 
 
 async def start_message(first_name, user_id):
@@ -106,7 +105,8 @@ async def main_menu(update: Union[Message, CallbackQuery],
             new_menu_id = await bot.send_message(user.id, '<b>ℹ️Открыто меню из рассылки</b>',
                                                  reply_markup=kb_client_menu.back_menu)
         else:
-            if user_data.email:
+            auth_data = DB.UserAuth.select(user.id)
+            if auth_data:
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption='<b>Текст для авторизированных пользователей</b>',
@@ -328,41 +328,6 @@ async def already_registered(call: CallbackQuery):
     await show_auth_screen(call)
 
 
-async def auth_email(call: CallbackQuery, state: FSMContext):
-    try:
-        await call.message.delete()
-    except TelegramAPIError:
-        ...
-    menu = await call.message.answer(
-        '<b>Введите email, указанный при регистрации на платформе</b>'
-    )
-    DB.User.update(call.from_user.id, menu_id=menu.message_id)
-    await state.set_state(FsmAuth.wait_email)
-    await state.update_data(menu_message=menu)
-    await call.answer()
-
-
-async def process_email(message: Message, state: FSMContext):
-    await message.delete()
-    data = await state.get_data()
-    menu: Message = data['menu_message']
-
-    email = message.text.strip().lower()
-    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-        await menu.edit_text('<b>❌ Некорректный email. Пожалуйста, введите правильный email</b>')
-        return
-
-    DB.User.update(message.from_user.id, email=email)
-    await state.clear()
-
-    await menu.delete()
-    new_menu = await message.answer_photo(
-        caption='<b>Авторизация прошла успешно!</b>',
-        photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
-        reply_markup=kb_client_menu.authorized_menu)
-    DB.User.update(message.from_user.id, menu_id=new_menu.message_id)
-
-
 async def authorized_stub(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
@@ -420,7 +385,6 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(existing_partner, F.data == 'client_existing_partner')
     dp.callback_query.register(new_partner, F.data == 'client_new_partner')
     dp.callback_query.register(already_registered, F.data == 'client_already_registered')
-    dp.callback_query.register(auth_email, F.data == 'client_auth_email')
     dp.callback_query.register(authorized_stub, F.data == 'client_knowledge_base')
     dp.callback_query.register(authorized_stub, F.data == 'client_offers')
     dp.callback_query.register(authorized_stub, F.data == 'client_socials')
@@ -430,7 +394,6 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
-    dp.message.register(process_email, FsmAuth.wait_email)
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
     dp.message.register(wait_phone, FsmRegistration.wait_phone)
     dp.callback_query.register(pick_role, F.data.startswith('pick:role'))

@@ -19,3 +19,4 @@ class FsmRegistration(StatesGroup):
 
 class FsmAuth(StatesGroup):
     wait_email = State()
+    wait_password = State()
