@@ -25,7 +25,7 @@
 
         .logo {
             margin-top: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             font-size: 28px;
             font-weight: 700;
             text-align: center;
@@ -36,12 +36,53 @@
             color: #FF6914;
         }
 
-        .subtitle {
+        .steps {
+            width: 100%;
+            max-width: 360px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background-color: var(--tg-theme-secondary-bg-color, #f5f5f5);
+            border-radius: 12px;
+        }
+
+        .steps-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--tg-theme-text-color, #000000);
+        }
+
+        .step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 10px;
             font-size: 14px;
-            color: var(--tg-theme-hint-color, #999999);
-            text-align: center;
-            margin-bottom: 32px;
             line-height: 1.4;
+            color: var(--tg-theme-text-color, #333333);
+        }
+
+        .step:last-child {
+            margin-bottom: 0;
+        }
+
+        .step-num {
+            min-width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #FF6914;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        .step a {
+            color: #FF6914;
+            text-decoration: underline;
         }
 
         .form-group {
@@ -79,6 +120,7 @@
 
         .form-group input::placeholder {
             color: var(--tg-theme-hint-color, #aaaaaa);
+            font-size: 13px;
         }
 
         .btn-submit {
@@ -153,19 +195,29 @@
 </head>
 <body>
     <div class="logo">WINLINE <span>PARTNERS</span></div>
-    <div class="subtitle">Введите данные от аккаунта<br>на платформе Winline Partners</div>
 
-    <div class="form-group">
-        <label>Email</label>
-        <input type="email" id="email" placeholder="partner@example.com" autocomplete="email">
+    <div class="steps">
+        <div class="steps-title">Как получить токен:</div>
+        <div class="step">
+            <div class="step-num">1</div>
+            <div>Войдите в <a href="https://iap-demo.admon.pro" target="_blank">личный кабинет</a> на платформе</div>
+        </div>
+        <div class="step">
+            <div class="step-num">2</div>
+            <div>Перейдите в настройки профиля</div>
+        </div>
+        <div class="step">
+            <div class="step-num">3</div>
+            <div>Скопируйте <b>Personal Access Token</b> и вставьте ниже</div>
+        </div>
     </div>
 
     <div class="form-group">
-        <label>Пароль</label>
-        <input type="password" id="password" placeholder="Ваш пароль" autocomplete="current-password">
+        <label>Access Token</label>
+        <input type="text" id="token" placeholder="eyJhbGciOiJIUzI1..." autocomplete="off">
     </div>
 
-    <button class="btn-submit" id="submitBtn" onclick="doAuth()">Войти</button>
+    <button class="btn-submit" id="submitBtn" onclick="doAuth()">Подтвердить</button>
 
     <div class="error-msg" id="errorMsg"></div>
 
@@ -181,8 +233,7 @@
 
         const API_URL = 'https://wlpartners.site/auth';
 
-        const emailInput = document.getElementById('email');
-        const passwordInput = document.getElementById('password');
+        const tokenInput = document.getElementById('token');
         const submitBtn = document.getElementById('submitBtn');
         const errorMsg = document.getElementById('errorMsg');
         const successMsg = document.getElementById('successMsg');
@@ -199,15 +250,19 @@
         async function doAuth() {
             hideError();
 
-            const email = emailInput.value.trim();
-            const password = passwordInput.value.trim();
+            const token = tokenInput.value.trim();
 
-            if (!email || !password) {
-                showError('Заполните все поля');
+            if (!token) {
+                showError('Вставьте токен');
                 return;
             }
 
-            // Get Telegram user id
+            // Basic JWT format check
+            if (token.split('.').length !== 3) {
+                showError('Неверный формат токена');
+                return;
+            }
+
             const userId = tg.initDataUnsafe?.user?.id;
             if (!userId) {
                 showError('Не удалось определить пользователя Telegram');
@@ -215,39 +270,37 @@
             }
 
             submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="spinner"></span>Авторизация...';
+            submitBtn.innerHTML = '<span class="spinner"></span>Проверка...';
 
             try {
                 const resp = await fetch(API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password, user_id: userId })
+                    body: JSON.stringify({ token, user_id: userId })
                 });
 
                 const data = await resp.json();
 
                 if (resp.ok && data.ok) {
-                    document.querySelector('.form-group:nth-child(1)').style.display = 'none';
-                    document.querySelector('.form-group:nth-child(2)').style.display = 'none';
+                    document.querySelector('.steps').style.display = 'none';
+                    document.querySelector('.form-group').style.display = 'none';
                     submitBtn.style.display = 'none';
-                    document.querySelector('.subtitle').style.display = 'none';
                     successMsg.style.display = 'block';
 
                     setTimeout(() => tg.close(), 1500);
                 } else {
                     showError(data.error || 'Ошибка авторизации');
                     submitBtn.disabled = false;
-                    submitBtn.innerHTML = 'Войти';
+                    submitBtn.innerHTML = 'Подтвердить';
                 }
             } catch (e) {
                 showError('Ошибка подключения к серверу');
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = 'Войти';
+                submitBtn.innerHTML = 'Подтвердить';
             }
         }
 
-        // Submit on Enter
-        passwordInput.addEventListener('keydown', function(e) {
+        tokenInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') doAuth();
         });
     </script>

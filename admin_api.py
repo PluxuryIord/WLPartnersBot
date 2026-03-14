@@ -11,6 +11,9 @@ import os
 import subprocess
 import sys
 
+import base64
+import json as json_mod
+
 import aiohttp
 from aiohttp import web
 
@@ -160,46 +163,41 @@ async def auth_user(request):
     except Exception:
         return cors_headers(web.json_response({'error': 'Invalid JSON'}, status=400))
 
-    email = (body.get('email') or '').strip().lower()
-    password = body.get('password') or ''
+    token = (body.get('token') or '').strip()
     user_id = body.get('user_id')
 
-    if not email or not password or not user_id:
-        return cors_headers(web.json_response({'error': 'email, password and user_id are required'}, status=400))
+    if not token or not user_id:
+        return cors_headers(web.json_response({'error': 'token and user_id are required'}, status=400))
 
     try:
         user_id = int(user_id)
     except (ValueError, TypeError):
         return cors_headers(web.json_response({'error': 'Invalid user_id'}, status=400))
 
-    # Proxy auth request to IAP API (server-side, no CORS issues)
+    # Validate JWT format (header.payload.signature)
+    parts = token.split('.')
+    if len(parts) != 3:
+        return cors_headers(web.json_response({'error': 'Неверный формат токена'}, status=400))
+
+    # Decode JWT payload to extract email (if present)
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f'{IAP_DOMAIN}/api/auth',
-                json={'email': email, 'password': password},
-                timeout=aiohttp.ClientTimeout(total=15)
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    token = result.get('token', '')
+        payload_b64 = parts[1] + '=' * (-len(parts[1]) % 4)  # fix padding
+        payload = json_mod.loads(base64.urlsafe_b64decode(payload_b64))
+    except Exception:
+        return cors_headers(web.json_response({'error': 'Неверный формат токена'}, status=400))
 
-                    def _save_auth():
-                        existing = DB.UserAuth.select(user_id)
-                        if existing:
-                            DB.UserAuth.update(user_id, email=email, token=token)
-                        else:
-                            DB.UserAuth.add(user_id, email, token)
+    email = payload.get('email', '')
 
-                    await asyncio.to_thread(_save_auth)
+    def _save_auth():
+        existing = DB.UserAuth.select(user_id)
+        if existing:
+            DB.UserAuth.update(user_id, email=email, token=token)
+        else:
+            DB.UserAuth.add(user_id, email, token)
 
-                    return cors_headers(web.json_response({'ok': True}))
-                else:
-                    return cors_headers(web.json_response(
-                        {'error': 'Неверный email или пароль'}, status=401))
-    except aiohttp.ClientError:
-        return cors_headers(web.json_response(
-            {'error': 'Ошибка подключения к платформе'}, status=502))
+    await asyncio.to_thread(_save_auth)
+
+    return cors_headers(web.json_response({'ok': True}))
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
