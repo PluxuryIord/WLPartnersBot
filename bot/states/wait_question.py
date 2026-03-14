@@ -16,3 +16,6 @@ class FsmRegistration(StatesGroup):
     wait_phone = State()
     wait_about_role = State()
     wait_traff = State()
+
+class FsmAuth(StatesGroup):
+    wait_email = State()

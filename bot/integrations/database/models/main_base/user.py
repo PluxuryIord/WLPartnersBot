@@ -34,6 +34,7 @@ class User(Base):
     graph: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     phone_number: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     registered: Mapped[bool] = mapped_column(default=False)
+    email: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     personal_label: Mapped[bool] = mapped_column(default=False)
     show_qr: Mapped[bool] = mapped_column(default=False)
 
