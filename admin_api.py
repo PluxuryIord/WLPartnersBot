@@ -179,12 +179,16 @@ async def auth_user(request):
     if len(parts) != 3:
         return cors_headers(web.json_response({'error': 'Неверный формат токена'}, status=400))
 
-    # Decode JWT payload to extract email (if present)
+    # Decode and validate JWT payload
     try:
         payload_b64 = parts[1] + '=' * (-len(parts[1]) % 4)  # fix padding
         payload = json_mod.loads(base64.urlsafe_b64decode(payload_b64))
     except Exception:
         return cors_headers(web.json_response({'error': 'Неверный формат токена'}, status=400))
+
+    # IAP tokens must contain user id in payload
+    if 'id' not in payload:
+        return cors_headers(web.json_response({'error': 'Токен не содержит данных пользователя'}, status=400))
 
     email = payload.get('email', '')
 
