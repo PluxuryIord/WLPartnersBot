@@ -53,7 +53,7 @@ authorized_menu = create_inline([
     ['Актуальные промо и ссылки', 'call', 'client_promo'],
     ['Чат с менеджером', 'call', 'client_chat_manager'],
     ['Я на мероприятии!', 'call', 'client_at_event'],
-    ['🔙 Назад', 'call', 'client_back_to_start'],
+    ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
 
 delete_message = kb_delete_message

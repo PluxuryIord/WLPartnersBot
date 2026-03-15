@@ -294,7 +294,9 @@
                     submitBtn.style.display = 'none';
                     successMsg.style.display = 'block';
 
-                    setTimeout(() => tg.close(), 1500);
+                    setTimeout(() => {
+                        tg.sendData(JSON.stringify({ ok: true, email: data.email || '' }));
+                    }, 1000);
                 } else {
                     showError(data.error || 'Ошибка авторизации');
                     submitBtn.disabled = false;
