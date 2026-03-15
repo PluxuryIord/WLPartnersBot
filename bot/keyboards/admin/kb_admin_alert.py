@@ -83,6 +83,7 @@ def generate_buttons(urls: list):
 select_users = create_inline(
     [
         ['👥 Отправить всем', 'call', 'alert_filter|all'],
+        ['💬 Отправить в группы', 'call', 'alert_filter|groups'],
         ['⚙️ Отправить администраторам', 'call', 'alert_filter|admins'],
         ['🕶 Только мне (тест)', 'call', 'alert_filter|me'],
         ['🗓 Фильтр по регистрациям', 'call', 'alert_registration_filter'],

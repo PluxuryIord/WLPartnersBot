@@ -482,6 +482,9 @@ async def get_users(call: CallbackQuery, state: FSMContext):
             users = [admin.admin_id for admin in DB.Admin.select(all_scalars=True)]
         case 'me':
             users = [call.from_user.id]
+        case 'groups':
+            groups = DB.GroupChat.select(where=(DB.GroupChat.is_active == True), all_scalars=True)
+            users = [g.chat_id for g in groups] if groups else []
         case 'reg_today' | 'reg_7days' | 'reg_30days':
             users = []
             for user in DB.User.select(all_scalars=True):

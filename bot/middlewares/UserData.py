@@ -37,6 +37,12 @@ class UserData(BaseMiddleware):
             event: Union[Message, CallbackQuery, InlineQuery],
             data: Dict[str, Any]
     ) -> Any:
+        # Skip for group chats — group handlers don't need user_data
+        if isinstance(event, Message) and event.chat.type != 'private':
+            return await handler(event, data)
+        if isinstance(event, CallbackQuery) and event.message and event.message.chat.type != 'private':
+            return await handler(event, data)
+
         # Update Stat
         if isinstance(event, Message):
             DBStats.Events.new('message', event.from_user.id, event.html_text)
