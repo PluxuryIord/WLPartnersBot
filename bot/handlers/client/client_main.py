@@ -377,6 +377,13 @@ async def logout(call: CallbackQuery):
     await call.answer('Вы вышли из аккаунта')
 
 
+async def get_file_id(message: Message):
+    """Temp handler: admin sends photo in PM → bot replies with file_id."""
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        await message.reply(f'<b>Photo file_id:</b>\n<code>{file_id}</code>')
+
+
 async def reg_help(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
@@ -393,6 +400,7 @@ async def wait_about_role(message: Message, state: FSMContext):
 
 
 def register_handlers_client_main(dp: Dispatcher):
+    dp.message.register(get_file_id, F.photo, F.chat.type == 'private', config.admin_filter)
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(telegram.delete_message, F.data == 'client_delete_message')
     dp.callback_query.register(back_menu, F.data == 'client_back_menu')

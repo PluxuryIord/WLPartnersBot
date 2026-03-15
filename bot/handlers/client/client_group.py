@@ -16,6 +16,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.enums import ChatMemberStatus
 
 from bot.integrations import DB
+from bot.initialization import bot_texts
+from bot.utils.announce_bot import bot
 from bot.keyboards.client import kb_client_group
 
 
@@ -44,80 +46,109 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
             DB.GroupChat.update(mark=event.chat.id, is_active=False)
 
 
-# ── Group chat menu ──────────────────────────────────────────────────────────
+# ── Group chat commands ───────────────────────────────────────────────────────
 
 async def group_menu(message: Message):
-    """Main support menu in group chat."""
+    """Main support menu — list of commands."""
     await message.reply(
-        '<b>Меню поддержки WL Partners</b>\n\n'
-        '<i>Выберите интересующий раздел:</i>',
-        reply_markup=kb_client_group.group_main_menu)
+        '<b>📋 Меню поддержки WL Partners</b>\n\n'
+        '/promo — Актуальные промо материалы\n'
+        '/calendar — Календарь\n'
+        '/landings — Актуальные лендинги\n'
+        '/kb — База знаний')
 
 
-async def group_menu_callback(call: CallbackQuery):
-    """Return to main group menu via callback."""
-    await call.message.edit_text(
-        '<b>Меню поддержки WL Partners</b>\n\n'
-        '<i>Выберите интересующий раздел:</i>',
-        reply_markup=kb_client_group.group_main_menu)
-    await call.answer()
-
-
-# ── Sections ─────────────────────────────────────────────────────────────────
-
-async def group_promo(call: CallbackQuery):
+async def group_promo_cmd(message: Message):
     """Актуальные промо материалы."""
-    await call.message.edit_text(
+    await message.reply(
         '<b>📢 Актуальные промо материалы</b>\n\n'
         'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.',
         reply_markup=kb_client_group.promo_menu)
-    await call.answer()
 
 
-async def group_calendar(call: CallbackQuery):
+async def group_calendar_cmd(message: Message):
     """Календарь."""
-    await call.message.edit_text(
+    await message.reply(
         '<b>📅 Календарь</b>\n\n'
         'Перейдите по ссылке для просмотра актуального календаря.',
         reply_markup=kb_client_group.calendar_menu)
-    await call.answer()
 
 
-async def group_landings(call: CallbackQuery):
-    """Список актуальных лендингов."""
-    await call.message.edit_text(
+async def group_landings_cmd(message: Message):
+    """Актуальные лендинги."""
+    await message.reply(
         '<b>🌐 Список актуальных лендингов</b>\n\n'
-        '<i>Контент будет добавлен позднее.</i>',
-        reply_markup=kb_client_group.back_to_group_menu)
-    await call.answer()
+        '<i>Контент будет добавлен позднее.</i>')
 
 
-async def group_knowledge_base(call: CallbackQuery):
+async def group_kb_cmd(message: Message):
     """База знаний — список подтем."""
-    await call.message.edit_text(
+    await message.reply(
         '<b>📚 База знаний</b>\n\n'
         '<i>Выберите интересующую тему:</i>',
         reply_markup=kb_client_group.knowledge_base_menu)
-    await call.answer()
 
 
 # ── Knowledge base subtopics ─────────────────────────────────────────────────
 
-KB_TEXTS = {
-    'group_kb_lk_overview': '<b>Обзор личного кабинета</b>\n\n<i>Текст будет добавлен позднее.</i>',
-    'group_kb_offer_info': '<b>Информация по офферу</b>\n\n<i>Текст будет добавлен позднее.</i>',
-    'group_kb_ref_link': '<b>Генерация реф.ссылки</b>\n\n<i>Текст будет добавлен позднее.</i>',
-    'group_kb_postback': '<b>Настройка постбэка</b>\n\n<i>Текст будет добавлен позднее.</i>',
-    'group_kb_download_report': '<b>Скачивание отчета</b>\n\n<i>Текст будет добавлен позднее.</i>',
+# Mapping: callback_data -> key in bot_texts.knowledge_base
+KB_KEYS = {
+    'group_kb_lk_overview': 'lk_overview',
+    'group_kb_offer_info': 'offer_info',
+    'group_kb_ref_link': 'ref_link',
+    'group_kb_postback': 'postback',
+    'group_kb_download_report': 'download_report',
 }
 
 
 async def group_kb_subtopic(call: CallbackQuery):
     """Handle individual knowledge base subtopic."""
-    text = KB_TEXTS.get(call.data, '<b>Информация не найдена</b>')
+    key = call.data
+    kb = bot_texts.knowledge_base
+    text_key = KB_KEYS.get(key)
+    text = kb.get(text_key, '<b>Информация не найдена</b>') if text_key else '<b>Информация не найдена</b>'
+
+    photo_postback = kb.get('postback_photo') or None
+    photo_report = kb.get('report_photo') or None
+
+    # Topics with photos: postback (photo 1), download_report (photo 2)
+    if key == 'group_kb_postback' and photo_postback:
+        await call.message.delete()
+        await bot.send_photo(
+            chat_id=call.message.chat.id,
+            photo=photo_postback,
+            caption=text,
+            reply_markup=kb_client_group.back_to_knowledge_base)
+    elif key == 'group_kb_download_report' and photo_report:
+        await call.message.delete()
+        await bot.send_photo(
+            chat_id=call.message.chat.id,
+            photo=photo_report,
+            caption=text,
+            reply_markup=kb_client_group.back_to_knowledge_base)
+        # Send part 2 as follow-up
+        text_2 = kb.get('download_report_2', '')
+        if text_2:
+            await bot.send_message(chat_id=call.message.chat.id, text=text_2)
+    elif key == 'group_kb_download_report':
+        # No photo yet — send text only + part 2
+        await call.message.edit_text(
+            text, reply_markup=kb_client_group.back_to_knowledge_base)
+        text_2 = kb.get('download_report_2', '')
+        if text_2:
+            await bot.send_message(chat_id=call.message.chat.id, text=text_2)
+    else:
+        await call.message.edit_text(
+            text, reply_markup=kb_client_group.back_to_knowledge_base)
+    await call.answer()
+
+
+async def group_kb_cmd_callback(call: CallbackQuery):
+    """Return to knowledge base menu from subtopic."""
     await call.message.edit_text(
-        text,
-        reply_markup=kb_client_group.back_to_knowledge_base)
+        '<b>📚 База знаний</b>\n\n'
+        '<i>Выберите интересующую тему:</i>',
+        reply_markup=kb_client_group.knowledge_base_menu)
     await call.answer()
 
 
@@ -131,11 +162,11 @@ def register_handlers_client_group(dp: Dispatcher):
     # Group chat commands
     group_filter = F.chat.type.in_({'group', 'supergroup'})
     dp.message.register(group_menu, Command(commands=['menu']), group_filter)
+    dp.message.register(group_promo_cmd, Command(commands=['promo']), group_filter)
+    dp.message.register(group_calendar_cmd, Command(commands=['calendar']), group_filter)
+    dp.message.register(group_landings_cmd, Command(commands=['landings']), group_filter)
+    dp.message.register(group_kb_cmd, Command(commands=['kb']), group_filter)
 
-    # Group callbacks (all prefixed with group_)
-    dp.callback_query.register(group_menu_callback, F.data == 'group_back_menu')
-    dp.callback_query.register(group_promo, F.data == 'group_promo')
-    dp.callback_query.register(group_calendar, F.data == 'group_calendar')
-    dp.callback_query.register(group_landings, F.data == 'group_landings')
-    dp.callback_query.register(group_knowledge_base, F.data == 'group_knowledge_base')
+    # Knowledge base callbacks
+    dp.callback_query.register(group_kb_cmd_callback, F.data == 'group_knowledge_base')
     dp.callback_query.register(group_kb_subtopic, F.data.startswith('group_kb_'))
