@@ -43,7 +43,11 @@ auth_menu = create_inline([
 ], 1)
 
 event_menu = create_inline([
-    ['Заполнить анкету', 'call', 'client_registration'],
+    ['Заполнить анкету', 'call', 'client_event_anketa'],
+], 1)
+
+event_qr_new_menu = create_inline([
+    ['Стать партнёром', 'call', 'client_new_partner'],
 ], 1)
 
 authorized_menu = create_inline([

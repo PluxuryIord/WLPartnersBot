@@ -13,7 +13,7 @@ from aiogram.utils.markdown import hlink
 
 import bot.keyboards.admin.kb_admin_topic
 from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize
-from bot.states.wait_question import FsmRegistration
+from bot.states.wait_question import FsmRegistration, FsmEventAnketa
 from bot.utils.qr_code import generate_qr_on_template
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from typing import Union
 
 from aiogram import F
-from aiogram.filters.command import Command
+from aiogram.filters.command import Command, CommandObject
 from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError
 
 from bot.utils import telegram as telegram, files
@@ -388,6 +388,219 @@ async def reg_help(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
 
+# ==================== Сценарий 3: Мероприятие (deep link + анкета) ====================
+
+async def _generate_event_qr(user_id: int) -> str:
+    """Generate QR for event, return path. Creates QRCode record if needed."""
+    qr_path = f"files/{user_id}.png"
+    if not os.path.exists(qr_path):
+        qr_id = DB.QRCode.add(user_id, "Мерч")
+        await generate_qr_on_template(
+            template_path="merch.png",
+            qr_data=f"{qr_id}",
+            output_path=qr_path,
+            qr_size=450,
+            qr_position=(43, 130),
+            qr_color="#FF6914"
+        )
+        await new_prize(str(user_id), 'Мерч', str(qr_id))
+    return qr_path
+
+
+async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
+    """Send QR photo with appropriate button underneath."""
+    qr_path = await _generate_event_qr(user_id)
+    reply_markup = None if is_partner else kb_client_menu.event_qr_new_menu
+    new_menu = await bot.send_photo(
+        chat_id=user_id,
+        photo=FSInputFile(qr_path),
+        caption='<b>Вот ваш QR для получения подарка!</b>',
+        reply_markup=reply_markup,
+    )
+    DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+    return new_menu
+
+
+async def start_event(message: Message, state: FSMContext):
+    """Deep link handler: /start event"""
+    user_id = message.from_user.id
+    user_data = DB.User.select(user_id)
+
+    # Create user if new
+    if not user_data:
+        await bot.send_message(user_id, '👋')
+        wait_msg = await bot.send_message(user_id, '⌛️ Загрузка...')
+        try:
+            thread_id = await telegram.topic_manager.create_user_topic(message.from_user.first_name)
+        except TelegramRetryAfter:
+            await wait_msg.edit_text('<b>😥 Бот перегружен, повторите через минуту.</b>')
+            return
+        DB.User.add(user_id, message.from_user.full_name, message.from_user.username, thread_id)
+        if config.admin_filter.is_system(user_id):
+            config.admin_filter.add_admin(user_id, 0, admin_access.full_admin_access)
+        await wait_msg.delete()
+
+        count_users = len(DB.User.select(all_scalars=True))
+        link_user = generate_user_hlink(user_id=user_id, text_link=message.from_user.full_name)
+        registration_alert = (
+            f'<b>🔔 Зарегистрировался пользователь №</b><code>{count_users}</code><b>:</b>\n\n'
+            f'<b>ID пользователя:</b> <code>{user_id}</code>\n'
+            f'<b>Отображаемое имя:</b> {link_user}\n'
+            f'<b>Никнейм</b>: {"@" + message.from_user.username if message.from_user.username else "<code>отсутствует</code>"}'
+        )
+        await admin_notifications.registration_notification(registration_alert)
+        user_data = DB.User.select(user_id)
+
+    # If authorized partner → QR immediately
+    auth_data = DB.UserAuth.select(user_id)
+    if auth_data:
+        await telegram.delete_message(chat_id=user_id, message_id=user_data.menu_id)
+        await _send_event_qr(user_id, is_partner=True)
+        return
+
+    # Not authorized → start anketa
+    await telegram.delete_message(chat_id=user_id, message_id=user_data.menu_id)
+    await _start_event_anketa(message, user_id, state)
+
+
+async def _start_event_anketa(message: Message, user_id: int, state: FSMContext):
+    """Load questions from DB and start the anketa flow."""
+    from sqlalchemy import asc
+    questions = DB.EventQuestion.select(
+        where=(DB.EventQuestion.is_active == True),
+        all_scalars=True,
+    )
+    if not questions:
+        # No questions configured → give QR immediately
+        await _send_event_qr(user_id, is_partner=False)
+        return
+
+    # Sort by order
+    questions = sorted(questions, key=lambda q: q.order)
+    questions_data = [
+        {'id': q.id, 'text': q.question_text, 'type': q.question_type, 'options': q.options}
+        for q in questions
+    ]
+
+    await state.set_state(FsmEventAnketa.answering)
+    await state.update_data(
+        anketa_questions=questions_data,
+        anketa_index=0,
+    )
+    await _send_anketa_question(user_id, questions_data[0], state)
+
+
+async def _send_anketa_question(user_id: int, question: dict, state: FSMContext):
+    """Send a single anketa question to the user."""
+    text = f'<b>{question["text"]}</b>'
+    if question['type'] == 'choice' and question.get('options'):
+        buttons = [
+            [opt, 'call', f'anketa_choice:{i}']
+            for i, opt in enumerate(question['options'])
+        ]
+        from bot.utils.telegram import create_inline
+        kb = create_inline(buttons, 1)
+        menu = await bot.send_message(user_id, text, reply_markup=kb)
+    else:
+        menu = await bot.send_message(user_id, text)
+    DB.User.update(mark=user_id, menu_id=menu.message_id)
+    await state.update_data(anketa_menu_message=menu)
+
+
+async def _anketa_next_or_finish(user_id: int, state: FSMContext):
+    """Move to next question or finish with QR."""
+    data = await state.get_data()
+    questions = data['anketa_questions']
+    index = data['anketa_index'] + 1
+
+    if index >= len(questions):
+        # All done → clear state, give QR
+        await state.clear()
+        await _send_event_qr(user_id, is_partner=False)
+        return
+
+    await state.update_data(anketa_index=index)
+    await _send_anketa_question(user_id, questions[index], state)
+
+
+async def process_anketa_text(message: Message, state: FSMContext):
+    """Handle text answer in event anketa."""
+    await message.delete()
+    data = await state.get_data()
+    questions = data['anketa_questions']
+    index = data['anketa_index']
+    question = questions[index]
+
+    # Save answer
+    DB.EventAnswer.add(
+        user_id=message.from_user.id,
+        question_id=question['id'],
+        answer_text=message.text,
+    )
+
+    # Delete previous question message
+    menu_msg = data.get('anketa_menu_message')
+    if menu_msg:
+        try:
+            await menu_msg.delete()
+        except TelegramAPIError:
+            ...
+
+    await _anketa_next_or_finish(message.from_user.id, state)
+
+
+async def process_anketa_choice(call: CallbackQuery, state: FSMContext):
+    """Handle choice button press in event anketa."""
+    data = await state.get_data()
+    questions = data['anketa_questions']
+    index = data['anketa_index']
+    question = questions[index]
+
+    choice_index = int(call.data.split(':')[1])
+    answer_text = question['options'][choice_index]
+
+    # Save answer
+    DB.EventAnswer.add(
+        user_id=call.from_user.id,
+        question_id=question['id'],
+        answer_text=answer_text,
+    )
+
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+
+    await call.answer()
+    await _anketa_next_or_finish(call.from_user.id, state)
+
+
+async def start_event_anketa_callback(call: CallbackQuery, state: FSMContext):
+    """Start event anketa from the 'Заполнить анкету' button."""
+    user_id = call.from_user.id
+
+    # Check if already authorized
+    auth_data = DB.UserAuth.select(user_id)
+    if auth_data:
+        try:
+            await call.message.delete()
+        except TelegramAPIError:
+            ...
+        await _send_event_qr(user_id, is_partner=True)
+        await call.answer()
+        return
+
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    await call.answer()
+    await _start_event_anketa(call.message, user_id, state)
+
+
+# ==================== End Сценарий 3 ====================
+
+
 async def wait_about_role(message: Message, state: FSMContext):
     await message.delete()
     data = await state.get_data()
@@ -399,8 +612,17 @@ async def wait_about_role(message: Message, state: FSMContext):
     DB.User.update(message.from_user.id, role=message.text)
 
 
+def _is_event_deeplink(message: Message) -> bool:
+    """Filter: /start event deep link."""
+    if message.text and message.text.strip().lower() == '/start event':
+        return True
+    return False
+
+
 def register_handlers_client_main(dp: Dispatcher):
     dp.message.register(get_file_id, F.photo, F.chat.type == 'private', config.admin_filter)
+    # Deep link /start event — BEFORE generic /start
+    dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(telegram.delete_message, F.data == 'client_delete_message')
     dp.callback_query.register(back_menu, F.data == 'client_back_menu')
@@ -417,7 +639,11 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(logout, F.data == 'client_logout')
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
+    dp.callback_query.register(start_event_anketa_callback, F.data == 'client_event_anketa')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
+    # Event anketa FSM handlers
+    dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
+    dp.callback_query.register(process_anketa_choice, F.data.startswith('anketa_choice:'), FsmEventAnketa.answering)
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
     dp.message.register(wait_phone, FsmRegistration.wait_phone)
     dp.callback_query.register(pick_role, F.data.startswith('pick:role'))

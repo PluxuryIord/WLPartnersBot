@@ -10,6 +10,7 @@ from .models.main_base import User, Admin, Alert, AdminNotification, Randomizer
 from .models.main_base import TopicMessages, ForwardTopicMessages, Settings, Texts, Support, Winner, QRCode
 from .models.main_base import UserAuth
 from .models.main_base import GroupChat
+from .models.main_base import EventQuestion, EventAnswer
 from sqlalchemy import or_, and_, not_, null
 
 
@@ -29,6 +30,8 @@ class DB:
     Randomizer = Randomizer
     UserAuth = UserAuth
     GroupChat = GroupChat
+    EventQuestion = EventQuestion
+    EventAnswer = EventAnswer
 
     sql_or = or_
     sql_and = and_

@@ -12,7 +12,8 @@ admin_accesses = {
     'notifications': ['🔔|Настройка уведомлений', 'admin_notifications'],
     'admins': ['👥|Администраторы', 'admin_admins'],
     'bot_info': ['🔐|Данные и статистика', 'admin_bot_info'],
-    'qr_generator': ['📷|QR генератор', 'admin_qr_generator']
+    'qr_generator': ['📷|QR генератор', 'admin_qr_generator'],
+    'event_questions': ['📋|Анкета мероприятия', 'admin_event_questions']
 }
 
 null_admin_access = {access: False for access in admin_accesses}
