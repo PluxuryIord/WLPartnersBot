@@ -39,7 +39,6 @@ from bot.initialization import bot_texts
 from aiogram.types import FSInputFile
 from aiogram.enums import ContentType, ChatMemberStatus
 import os
-import json
 
 
 async def start_message(first_name, user_id):
@@ -364,33 +363,6 @@ async def at_event(call: CallbackQuery):
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
 
 
-async def on_webapp_auth(message: Message):
-    """Handle WebApp sendData after successful auth"""
-    try:
-        data = json.loads(message.web_app_data.data)
-    except Exception:
-        return
-
-    if not data.get('ok'):
-        return
-
-    email = data.get('email', '')
-    user_id = message.from_user.id
-
-    # Delete the old menu message
-    user_data = DB.User.select(user_id)
-    if user_data:
-        await telegram.delete_message(chat_id=user_id, message_id=user_data.menu_id)
-
-    text = f'<b>✅ Вы авторизованы</b>\n\n📧 <b>Email:</b> {email}' if email else '<b>✅ Вы авторизованы</b>'
-
-    new_menu = await bot.send_photo(
-        chat_id=user_id,
-        caption=text,
-        photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
-        reply_markup=kb_client_menu.authorized_menu)
-    DB.User.update(mark=user_id, menu_id=new_menu.message_id)
-
 
 async def logout(call: CallbackQuery):
     """Logout: delete auth data and show start menu"""
@@ -436,7 +408,6 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(at_event, F.data == 'client_at_event')
     dp.callback_query.register(logout, F.data == 'client_logout')
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
-    dp.message.register(on_webapp_auth, F.content_type == ContentType.WEB_APP_DATA)
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)

@@ -20,6 +20,13 @@ from aiohttp import web
 # Add bot root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from environs import Env
+
+env = Env()
+env.read_env()
+BOT_TOKEN = env.str('TG_TOKEN')
+TELEGRAM_API = f'https://api.telegram.org/bot{BOT_TOKEN}'
+
 from bot.integrations import DB  # noqa: E402
 
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -154,6 +161,44 @@ async def send_broadcast(request):
 
 IAP_DOMAIN = 'https://iap-demo.admon.pro'
 
+AUTHORIZED_KEYBOARD = {
+    'inline_keyboard': [
+        [{'text': 'База знаний', 'callback_data': 'client_knowledge_base'}],
+        [{'text': 'Офферы', 'callback_data': 'client_offers'}],
+        [{'text': 'Социальные сети', 'callback_data': 'client_socials'}],
+        [{'text': 'Актуальные промо и ссылки', 'callback_data': 'client_promo'}],
+        [{'text': 'Чат с менеджером', 'callback_data': 'client_chat_manager'}],
+        [{'text': 'Я на мероприятии!', 'callback_data': 'client_at_event'}],
+        [{'text': '🚪 Выйти из аккаунта', 'callback_data': 'client_logout'}],
+    ]
+}
+
+PHOTO_ID = 'AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ'
+
+
+async def tg_delete_message(session, chat_id, message_id):
+    try:
+        await session.post(f'{TELEGRAM_API}/deleteMessage', json={
+            'chat_id': chat_id, 'message_id': message_id})
+    except Exception:
+        pass
+
+
+async def tg_send_authorized_menu(session, user_id, email):
+    email_text = f'\n\n📧 <b>Email:</b> {email}' if email else ''
+    caption = f'<b>✅ Вы авторизованы</b>{email_text}'
+    resp = await session.post(f'{TELEGRAM_API}/sendPhoto', json={
+        'chat_id': user_id,
+        'photo': PHOTO_ID,
+        'caption': caption,
+        'parse_mode': 'HTML',
+        'reply_markup': AUTHORIZED_KEYBOARD,
+    })
+    data = await resp.json()
+    if data.get('ok'):
+        return data['result']['message_id']
+    return None
+
 
 # ── POST /auth ───────────────────────────────────────────────────────────────
 
@@ -203,6 +248,21 @@ async def auth_user(request):
             DB.UserAuth.add(user_id, email, token)
 
     await asyncio.to_thread(_save_auth)
+
+    # Send authorized menu to Telegram
+    try:
+        async with aiohttp.ClientSession() as tg_session:
+            # Delete old menu
+            user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
+            if user_data and user_data.menu_id:
+                await tg_delete_message(tg_session, user_id, user_data.menu_id)
+
+            # Send new authorized menu
+            new_msg_id = await tg_send_authorized_menu(tg_session, user_id, email)
+            if new_msg_id:
+                await asyncio.to_thread(lambda: DB.User.update(mark=user_id, menu_id=new_msg_id))
+    except Exception:
+        pass
 
     return cors_headers(web.json_response({'ok': True, 'email': email}))
 
