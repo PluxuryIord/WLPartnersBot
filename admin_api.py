@@ -174,23 +174,26 @@ async def auth_user(request):
     except (ValueError, TypeError):
         return cors_headers(web.json_response({'error': 'Invalid user_id'}, status=400))
 
-    # Validate JWT format (header.payload.signature)
-    parts = token.split('.')
-    if len(parts) != 3:
-        return cors_headers(web.json_response({'error': 'Неверный формат токена'}, status=400))
-
-    # Decode and validate JWT payload
+    # Validate token against IAP API
     try:
-        payload_b64 = parts[1] + '=' * (-len(parts[1]) % 4)  # fix padding
-        payload = json_mod.loads(base64.urlsafe_b64decode(payload_b64))
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f'{IAP_DOMAIN}/api/auth/current',
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return cors_headers(web.json_response(
+                        {'error': 'Неверный токен'}, status=401))
+                iap_user = await resp.json()
+    except asyncio.TimeoutError:
+        return cors_headers(web.json_response(
+            {'error': 'IAP сервер не отвечает'}, status=502))
     except Exception:
-        return cors_headers(web.json_response({'error': 'Неверный формат токена'}, status=400))
+        return cors_headers(web.json_response(
+            {'error': 'Ошибка проверки токена'}, status=500))
 
-    # IAP tokens must contain user id in payload
-    if 'id' not in payload:
-        return cors_headers(web.json_response({'error': 'Токен не содержит данных пользователя'}, status=400))
-
-    email = payload.get('email', '')
+    email = iap_user.get('email', '')
 
     def _save_auth():
         existing = DB.UserAuth.select(user_id)
@@ -201,7 +204,7 @@ async def auth_user(request):
 
     await asyncio.to_thread(_save_auth)
 
-    return cors_headers(web.json_response({'ok': True}))
+    return cors_headers(web.json_response({'ok': True, 'email': email}))
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
