@@ -111,32 +111,30 @@ async def group_kb_subtopic(call: CallbackQuery):
     photo_postback = kb.get('postback_photo') or None
     photo_report = kb.get('report_photo') or None
 
-    # Topics with photos: postback (photo 1), download_report (photo 2)
+    chat_id = call.message.chat.id
+
+    # Topics with photos: send photo first, then text as separate message
     if key == 'group_kb_postback' and photo_postback:
         await call.message.delete()
-        await bot.send_photo(
-            chat_id=call.message.chat.id,
-            photo=photo_postback,
-            caption=text,
+        await bot.send_photo(chat_id=chat_id, photo=photo_postback)
+        await bot.send_message(
+            chat_id=chat_id, text=text,
             reply_markup=kb_client_group.back_to_knowledge_base)
     elif key == 'group_kb_download_report' and photo_report:
         await call.message.delete()
-        await bot.send_photo(
-            chat_id=call.message.chat.id,
-            photo=photo_report,
-            caption=text,
+        await bot.send_photo(chat_id=chat_id, photo=photo_report)
+        await bot.send_message(
+            chat_id=chat_id, text=text,
             reply_markup=kb_client_group.back_to_knowledge_base)
-        # Send part 2 as follow-up
         text_2 = kb.get('download_report_2', '')
         if text_2:
-            await bot.send_message(chat_id=call.message.chat.id, text=text_2)
+            await bot.send_message(chat_id=chat_id, text=text_2)
     elif key == 'group_kb_download_report':
-        # No photo yet — send text only + part 2
         await call.message.edit_text(
             text, reply_markup=kb_client_group.back_to_knowledge_base)
         text_2 = kb.get('download_report_2', '')
         if text_2:
-            await bot.send_message(chat_id=call.message.chat.id, text=text_2)
+            await bot.send_message(chat_id=chat_id, text=text_2)
     else:
         await call.message.edit_text(
             text, reply_markup=kb_client_group.back_to_knowledge_base)
