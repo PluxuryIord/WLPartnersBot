@@ -76,9 +76,8 @@ async def group_calendar_cmd(message: Message):
 
 async def group_landings_cmd(message: Message):
     """Актуальные лендинги."""
-    await message.reply(
-        '<b>🌐 Список актуальных лендингов</b>\n\n'
-        '<i>Контент будет добавлен позднее.</i>')
+    text = bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>')
+    await message.reply(text, disable_web_page_preview=True)
 
 
 async def group_kb_cmd(message: Message):

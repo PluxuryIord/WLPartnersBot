@@ -18,6 +18,7 @@ class BotTexts:
         self.bot_info = {}
         self.admin_alert = {}
         self.knowledge_base = {}
+        self.landings = {}
         self.start_debug = config.reset_texts
 
     def load_db_texts(self):
@@ -43,6 +44,7 @@ class BotTexts:
         self.bot_info = texts['bot_info']
         self.admin_alert = texts['admin_alert']
         self.knowledge_base = texts.get('knowledge_base', {})
+        self.landings = texts.get('landings', {})
 
 
 bot_texts = BotTexts()

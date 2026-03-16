@@ -286,4 +286,33 @@ default_texts = {
         'report_photo': 'AgACAgIAAxkBAAK9mmm4WZqYITye40Sdf4r0t1uAa70TAAJdFGsbXuvJSdfL2z-_ktayAQADAgADeQADOgQ',
         'report_photo_2': 'AgACAgIAAxkBAAK9nGm4WbI0j7ZMphKz1SXphyjrVIaSAAJeFGsbXuvJSd4YVLYwK0WsAQADAgADeQADOgQ',
     }],
+
+    'landings': ['Актуальные лендинги', {
+        'landings_text':
+            '<b>🌐 Список актуальных лендингов</b>\n\n'
+            'Здесь представлены лендинги, на которые вы можете вести трафик.\n\n'
+            'Для получения ссылки с вашими партнерскими метками, нужно зайти в карточку оффера в раздел "Генератор ссылок".\n\n'
+            '<b>📋 Регистрация:</b>\n'
+            '• <a href="https://winline.ru/registration/">Страница регистрации</a>\n'
+            '• <a href="https://winline.ru/registration?utm=cyber">Страница регистрации CYBER</a>\n'
+            '• <a href="https://winline.ru/freebet/">Фрибет 3 000 руб.</a>\n'
+            '• <a href="https://winline.ru/programloyalty">Новая Программа Лояльности</a>\n\n'
+            '<b>🎰 Лотереи и игры:</b>\n'
+            '• <a href="https://winline.ru/lottery">Лотереи</a>\n'
+            '• <a href="https://winline.ru/games/lottery">Лотереи (Регистрация)</a>\n'
+            '• <a href="https://winline.ru/games">Быстрые игры</a>\n\n'
+            '<b>📱 Мобильные:</b>\n'
+            '• <a href="https://m.winline.ru/auth/registration">Мобильная страница регистрации</a>\n'
+            '• <a href="https://m.winline.ru/registration?v=1">Мобильная регистрация (фрибет)</a>\n'
+            '• <a href="https://m.winline.ru/registration?v=4">Регистрация без лого 1</a>\n'
+            '• <a href="https://m.winline.ru/registration?v=5">Регистрация без лого 2</a>\n'
+            '• <a href="https://m.winline.ru/registration?v=6">Регистрация без лого 3</a>\n\n'
+            '<b>📺 Видеотрансляции:</b>\n'
+            '• <a href="https://winline.ru/video/">Все трансляции</a>\n'
+            '• <a href="https://winline.ru/video/football/">Футбол</a>\n'
+            '• <a href="https://winline.ru/video/tennis/">Теннис</a>\n'
+            '• <a href="https://winline.ru/video/xokkej/">Хоккей</a>\n'
+            '• <a href="https://winline.ru/video/basketball/">Баскетбол</a>\n'
+            '• <a href="https://winline.ru/video/rpl/">РПЛ</a>',
+    }],
 }
