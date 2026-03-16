@@ -282,7 +282,8 @@ default_texts = {
             'После настройки нужно нажать кнопку "Применить".\n\n'
             '🚩 Кнопка <b>"Экспорта"</b> отчета находится в правом верхнем углу, нажав на нее вы можете скачать отчет в формате CSV или XSLX.\n'
             'Советуем скачивать отчет с детализацией, эту настройку можно задать в поле "Тип".',
-        'postback_photo': 'AgACAgIAAxkBAAK9e2m4VTJGUHhQXt3rlu-z7Q2a6q7nAAJPFGsbXuvJSWap7-1AMrSOAQADAgADeQADOgQ',
-        'report_photo': 'AgACAgIAAxkBAAK9fGm4VTK5HVxwRuJDYlDRDyh17_x3AAJQFGsbXuvJSdFoukPO8spLAQADAgADeQADOgQ',
+        'postback_photo': 'AgACAgIAAxkBAAK9nmm4Wc_D1cphXnx09OIkEWs_VSC2AAJfFGsbXuvJSeff3yWZixk8AQADAgADeQADOgQ',
+        'report_photo': 'AgACAgIAAxkBAAK9mmm4WZqYITye40Sdf4r0t1uAa70TAAJdFGsbXuvJSdfL2z-_ktayAQADAgADeQADOgQ',
+        'report_photo_2': 'AgACAgIAAxkBAAK9nGm4WbI0j7ZMphKz1SXphyjrVIaSAAJeFGsbXuvJSd4YVLYwK0WsAQADAgADeQADOgQ',
     }],
 }

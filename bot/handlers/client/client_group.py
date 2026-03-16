@@ -110,6 +110,7 @@ async def group_kb_subtopic(call: CallbackQuery):
 
     photo_postback = kb.get('postback_photo') or None
     photo_report = kb.get('report_photo') or None
+    photo_report_2 = kb.get('report_photo_2') or None
 
     chat_id = call.message.chat.id
     sent_ids = []  # collect all message IDs for back button
@@ -123,35 +124,30 @@ async def group_kb_subtopic(call: CallbackQuery):
             chat_id=chat_id, text=text,
             reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
         sent_ids.append(msg2.message_id)
-    elif key == 'group_kb_download_report' and photo_report:
-        await call.message.delete()
-        msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_report)
-        sent_ids.append(msg1.message_id)
-        text_2 = kb.get('download_report_2', '')
-        if text_2:
-            msg2 = await bot.send_message(chat_id=chat_id, text=text)
-            sent_ids.append(msg2.message_id)
-            msg3 = await bot.send_message(
-                chat_id=chat_id, text=text_2,
-                reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
-            sent_ids.append(msg3.message_id)
-        else:
-            msg2 = await bot.send_message(
-                chat_id=chat_id, text=text,
-                reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
-            sent_ids.append(msg2.message_id)
     elif key == 'group_kb_download_report':
+        await call.message.delete()
         text_2 = kb.get('download_report_2', '')
+        # Message 1: photo1 + text1
+        if photo_report:
+            msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_report)
+            sent_ids.append(msg1.message_id)
+        msg2 = await bot.send_message(chat_id=chat_id, text=text)
+        sent_ids.append(msg2.message_id)
+        # Message 2: photo2 + text2 (with back button)
         if text_2:
-            await call.message.edit_text(text)
-            sent_ids.append(call.message.message_id)
-            msg2 = await bot.send_message(
+            if photo_report_2:
+                msg3 = await bot.send_photo(chat_id=chat_id, photo=photo_report_2)
+                sent_ids.append(msg3.message_id)
+            msg4 = await bot.send_message(
                 chat_id=chat_id, text=text_2,
                 reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
-            sent_ids.append(msg2.message_id)
+            sent_ids.append(msg4.message_id)
         else:
-            await call.message.edit_text(
-                text, reply_markup=kb_client_group.back_to_knowledge_base)
+            # No text_2 — add back button to msg2 (rewrite not possible, send separate)
+            msg_back = await bot.send_message(
+                chat_id=chat_id, text='⬇️',
+                reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
+            sent_ids.append(msg_back.message_id)
     else:
         await call.message.edit_text(
             text, reply_markup=kb_client_group.back_to_knowledge_base)
