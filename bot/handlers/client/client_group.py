@@ -112,26 +112,49 @@ async def group_kb_subtopic(call: CallbackQuery):
     photo_report = kb.get('report_photo') or None
 
     chat_id = call.message.chat.id
+    sent_ids = []  # collect all message IDs for back button
 
     # Topics with photos: send photo first, then text as separate message
     if key == 'group_kb_postback' and photo_postback:
         await call.message.delete()
-        await bot.send_photo(chat_id=chat_id, photo=photo_postback)
-        await bot.send_message(chat_id=chat_id, text=text)
+        msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_postback)
+        sent_ids.append(msg1.message_id)
+        msg2 = await bot.send_message(
+            chat_id=chat_id, text=text,
+            reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
+        sent_ids.append(msg2.message_id)
     elif key == 'group_kb_download_report' and photo_report:
         await call.message.delete()
-        await bot.send_photo(chat_id=chat_id, photo=photo_report)
-        await bot.send_message(chat_id=chat_id, text=text)
+        msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_report)
+        sent_ids.append(msg1.message_id)
         text_2 = kb.get('download_report_2', '')
         if text_2:
-            await bot.send_message(chat_id=chat_id, text=text_2)
+            msg2 = await bot.send_message(chat_id=chat_id, text=text)
+            sent_ids.append(msg2.message_id)
+            msg3 = await bot.send_message(
+                chat_id=chat_id, text=text_2,
+                reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
+            sent_ids.append(msg3.message_id)
+        else:
+            msg2 = await bot.send_message(
+                chat_id=chat_id, text=text,
+                reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
+            sent_ids.append(msg2.message_id)
     elif key == 'group_kb_download_report':
-        await call.message.edit_text(text)
         text_2 = kb.get('download_report_2', '')
         if text_2:
-            await bot.send_message(chat_id=chat_id, text=text_2)
+            await call.message.edit_text(text)
+            sent_ids.append(call.message.message_id)
+            msg2 = await bot.send_message(
+                chat_id=chat_id, text=text_2,
+                reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
+            sent_ids.append(msg2.message_id)
+        else:
+            await call.message.edit_text(
+                text, reply_markup=kb_client_group.back_to_knowledge_base)
     else:
-        await call.message.edit_text(text)
+        await call.message.edit_text(
+            text, reply_markup=kb_client_group.back_to_knowledge_base)
     await call.answer()
 
 
@@ -140,6 +163,40 @@ async def group_kb_cmd_callback(call: CallbackQuery):
     await call.message.edit_text(
         '<b>📚 База знаний</b>\n\n'
         '<i>Выберите интересующую тему:</i>',
+        reply_markup=kb_client_group.knowledge_base_menu)
+    await call.answer()
+
+
+async def group_kb_back(call: CallbackQuery):
+    """Back button from multi-part KB topic — delete all sent messages, show KB menu."""
+    # Parse message IDs from callback data: group_kb_back:123,456,789
+    ids_part = call.data.split(':', 1)[1] if ':' in call.data else ''
+    message_ids = []
+    for mid_str in ids_part.split(','):
+        try:
+            message_ids.append(int(mid_str.strip()))
+        except ValueError:
+            pass
+
+    chat_id = call.message.chat.id
+
+    # Delete all tracked messages (including this one)
+    for mid in message_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
+    # Also delete the current message if not in the list
+    if call.message.message_id not in message_ids:
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+
+    # Send KB menu
+    await bot.send_message(
+        chat_id=chat_id,
+        text='<b>📚 База знаний</b>\n\n<i>Выберите интересующую тему:</i>',
         reply_markup=kb_client_group.knowledge_base_menu)
     await call.answer()
 
@@ -161,4 +218,5 @@ def register_handlers_client_group(dp: Dispatcher):
 
     # Knowledge base callbacks
     dp.callback_query.register(group_kb_cmd_callback, F.data == 'group_knowledge_base')
+    dp.callback_query.register(group_kb_back, F.data.startswith('group_kb_back:'))
     dp.callback_query.register(group_kb_subtopic, F.data.startswith('group_kb_'))

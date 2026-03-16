@@ -13,7 +13,7 @@ from aiogram.utils.markdown import hlink
 
 import bot.keyboards.admin.kb_admin_topic
 from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize
-from bot.states.wait_question import FsmRegistration, FsmEventAnketa
+from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth
 from bot.utils.qr_code import generate_qr_on_template
 
 if TYPE_CHECKING:
@@ -308,6 +308,68 @@ async def new_partner(call: CallbackQuery):
 
 async def already_registered(call: CallbackQuery):
     await show_auth_screen(call)
+
+
+# ── Email auth flow ──────────────────────────────────────────────────────────
+
+async def start_auth_email(call: CallbackQuery, state: FSMContext):
+    """User clicked 'Авторизоваться' → ask for email input."""
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    menu = await bot.send_message(
+        call.from_user.id,
+        '<b>📧 Введите email, указанный при регистрации на платформе</b>')
+    DB.User.update(mark=call.from_user.id, menu_id=menu.message_id)
+    await state.set_state(FsmAuth.wait_email)
+    await state.update_data(auth_menu_message=menu)
+    await call.answer()
+
+
+async def process_auth_email(message: Message, state: FSMContext):
+    """Process email input — validate format, save auth."""
+    import re
+    await message.delete()
+    data = await state.get_data()
+    menu_msg = data.get('auth_menu_message')
+
+    email = message.text.strip().lower()
+
+    # Basic email validation
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    '<b>❌ Некорректный формат email\n\n'
+                    '📧 Введите email, указанный при регистрации на платформе</b>')
+            except TelegramAPIError:
+                ...
+        return
+
+    # Save auth
+    user_id = message.from_user.id
+    existing = DB.UserAuth.select(user_id)
+    if existing:
+        DB.UserAuth.update(user_id, email=email, token=None)
+    else:
+        DB.UserAuth.add(user_id, email, token=None)
+
+    await state.clear()
+
+    # Delete old message and show authorized menu
+    if menu_msg:
+        try:
+            await menu_msg.delete()
+        except TelegramAPIError:
+            ...
+
+    new_menu = await bot.send_photo(
+        chat_id=user_id,
+        caption=f'<b>✅ Вы авторизованы</b>\n\n📧 <b>Email:</b> {email}',
+        photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
+        reply_markup=kb_client_menu.authorized_menu)
+    DB.User.update(mark=user_id, menu_id=new_menu.message_id)
 
 
 async def authorized_stub(call: CallbackQuery):
@@ -611,6 +673,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(existing_partner, F.data == 'client_existing_partner')
     dp.callback_query.register(new_partner, F.data == 'client_new_partner')
     dp.callback_query.register(already_registered, F.data == 'client_already_registered')
+    dp.callback_query.register(start_auth_email, F.data == 'client_auth_email')
     dp.callback_query.register(authorized_stub, F.data == 'client_knowledge_base')
     dp.callback_query.register(authorized_stub, F.data == 'client_offers')
     dp.callback_query.register(authorized_stub, F.data == 'client_socials')
@@ -622,6 +685,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(start_event_anketa_callback, F.data == 'client_event_anketa')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
+    # Email auth FSM handler
+    dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
     # Event anketa FSM handlers
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
     dp.callback_query.register(process_anketa_choice, F.data.startswith('anketa_choice:'), FsmEventAnketa.answering)

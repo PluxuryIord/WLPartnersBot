@@ -19,3 +19,11 @@ knowledge_base_menu = create_inline([
 back_to_knowledge_base = create_inline([
     ['🔙 К базе знаний', 'call', 'group_knowledge_base'],
 ], 1)
+
+
+def back_to_kb_with_ids(message_ids: list[int]):
+    """Back button that stores all message IDs to delete when pressed."""
+    ids_str = ','.join(str(mid) for mid in message_ids)
+    return create_inline([
+        ['🔙 К базе знаний', 'call', f'group_kb_back:{ids_str}'],
+    ], 1)
