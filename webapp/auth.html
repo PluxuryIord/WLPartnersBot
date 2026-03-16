@@ -36,53 +36,17 @@
             color: #FF6914;
         }
 
-        .steps {
+        .description {
             width: 100%;
             max-width: 360px;
             margin-bottom: 24px;
             padding: 16px;
             background-color: var(--tg-theme-secondary-bg-color, #f5f5f5);
             border-radius: 12px;
-        }
-
-        .steps-title {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: var(--tg-theme-text-color, #000000);
-        }
-
-        .step {
-            display: flex;
-            align-items: flex-start;
-            margin-bottom: 10px;
             font-size: 14px;
-            line-height: 1.4;
+            line-height: 1.5;
             color: var(--tg-theme-text-color, #333333);
-        }
-
-        .step:last-child {
-            margin-bottom: 0;
-        }
-
-        .step-num {
-            min-width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background-color: #FF6914;
-            color: #ffffff;
-            font-size: 13px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 10px;
-            flex-shrink: 0;
-        }
-
-        .step a {
-            color: #FF6914;
-            text-decoration: underline;
+            text-align: center;
         }
 
         .form-group {
@@ -120,7 +84,7 @@
 
         .form-group input::placeholder {
             color: var(--tg-theme-hint-color, #aaaaaa);
-            font-size: 13px;
+            font-size: 14px;
         }
 
         .btn-submit {
@@ -202,35 +166,23 @@
 <body>
     <div class="logo">WINLINE <span>PARTNERS</span></div>
 
-    <div class="steps">
-        <div class="steps-title">Как получить токен:</div>
-        <div class="step">
-            <div class="step-num">1</div>
-            <div>Войдите в <a href="https://iap-demo.admon.pro" target="_blank">личный кабинет</a> на платформе</div>
-        </div>
-        <div class="step">
-            <div class="step-num">2</div>
-            <div>Перейдите в настройки профиля</div>
-        </div>
-        <div class="step">
-            <div class="step-num">3</div>
-            <div>Скопируйте <b>Personal Access Token</b> и вставьте ниже</div>
-        </div>
+    <div class="description">
+        Введите email, указанный при регистрации на платформе Winline Partners
     </div>
 
     <div class="form-group">
-        <label>Access Token</label>
-        <input type="text" id="token" placeholder="eyJhbGciOiJIUzI1..." autocomplete="off">
+        <label>Email</label>
+        <input type="email" id="email" placeholder="example@mail.com" autocomplete="email">
     </div>
 
-    <button class="btn-submit" id="submitBtn" onclick="doAuth()">Подтвердить</button>
+    <button class="btn-submit" id="submitBtn" onclick="doAuth()">Войти</button>
 
     <div class="error-msg" id="errorMsg"></div>
 
     <div class="success-msg" id="successMsg">
         <div class="icon">&#10003;</div>
         <div class="text">Авторизация прошла успешно!</div>
-        <div class="hint">Нажмите /start в боте</div>
+        <div class="hint">Окно закроется автоматически</div>
     </div>
 
     <script>
@@ -240,7 +192,7 @@
 
         const API_URL = 'https://wlpartners.site/auth';
 
-        const tokenInput = document.getElementById('token');
+        const emailInput = document.getElementById('email');
         const submitBtn = document.getElementById('submitBtn');
         const errorMsg = document.getElementById('errorMsg');
         const successMsg = document.getElementById('successMsg');
@@ -257,16 +209,16 @@
         async function doAuth() {
             hideError();
 
-            const token = tokenInput.value.trim();
+            const email = emailInput.value.trim().toLowerCase();
 
-            if (!token) {
-                showError('Вставьте токен');
+            if (!email) {
+                showError('Введите email');
                 return;
             }
 
-            // Basic JWT format check
-            if (token.split('.').length !== 3) {
-                showError('Неверный формат токена');
+            const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+            if (!emailRegex.test(email)) {
+                showError('Некорректный формат email');
                 return;
             }
 
@@ -283,13 +235,13 @@
                 const resp = await fetch(API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token, user_id: userId })
+                    body: JSON.stringify({ email, user_id: userId })
                 });
 
                 const data = await resp.json();
 
                 if (resp.ok && data.ok) {
-                    document.querySelector('.steps').style.display = 'none';
+                    document.querySelector('.description').style.display = 'none';
                     document.querySelector('.form-group').style.display = 'none';
                     submitBtn.style.display = 'none';
                     successMsg.style.display = 'block';
@@ -298,16 +250,16 @@
                 } else {
                     showError(data.error || 'Ошибка авторизации');
                     submitBtn.disabled = false;
-                    submitBtn.innerHTML = 'Подтвердить';
+                    submitBtn.innerHTML = 'Войти';
                 }
             } catch (e) {
                 showError('Ошибка подключения к серверу');
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = 'Подтвердить';
+                submitBtn.innerHTML = 'Войти';
             }
         }
 
-        tokenInput.addEventListener('keydown', function(e) {
+        emailInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') doAuth();
         });
     </script>

@@ -11,7 +11,16 @@ import os
 import subprocess
 import sys
 
+import aiohttp
 from aiohttp import web
+
+from environs import Env
+
+env = Env()
+env.read_env()
+BOT_TOKEN = env.str('TG_TOKEN')
+TELEGRAM_API = f'https://api.telegram.org/bot{BOT_TOKEN}'
+IAP_ADMIN_TOKEN = env.str('IAP_ADMIN_TOKEN', '')
 
 # Add bot root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -148,6 +157,174 @@ async def send_broadcast(request):
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
 
+# ── Telegram helpers ──────────────────────────────────────────────────────────
+
+AUTHORIZED_KEYBOARD = {
+    'inline_keyboard': [
+        [{'text': 'База знаний', 'callback_data': 'client_knowledge_base'}],
+        [{'text': 'Офферы', 'callback_data': 'client_offers'}],
+        [{'text': 'Социальные сети', 'callback_data': 'client_socials'}],
+        [{'text': 'Актуальные промо и ссылки', 'callback_data': 'client_promo'}],
+        [{'text': 'Чат с менеджером', 'callback_data': 'client_chat_manager'}],
+        [{'text': 'Я на мероприятии!', 'callback_data': 'client_at_event'}],
+        [{'text': '🚪 Выйти из аккаунта', 'callback_data': 'client_logout'}],
+    ]
+}
+
+PHOTO_ID = 'AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ'
+
+
+async def tg_delete_message(session, chat_id, message_id):
+    try:
+        await session.post(f'{TELEGRAM_API}/deleteMessage', json={
+            'chat_id': chat_id, 'message_id': message_id})
+    except Exception:
+        pass
+
+
+async def tg_send_authorized_menu(session, user_id, email):
+    email_text = f'\n\n📧 <b>Email:</b> {email}' if email else ''
+    caption = f'<b>✅ Вы авторизованы</b>{email_text}'
+    resp = await session.post(f'{TELEGRAM_API}/sendPhoto', json={
+        'chat_id': user_id,
+        'photo': PHOTO_ID,
+        'caption': caption,
+        'parse_mode': 'HTML',
+        'reply_markup': AUTHORIZED_KEYBOARD,
+    })
+    data = await resp.json()
+    if data.get('ok'):
+        return data['result']['message_id']
+    return None
+
+
+async def tg_send_guest_menu(session, user_id):
+    """Send start menu for non-partner (guest) user."""
+    START_KEYBOARD = {
+        'inline_keyboard': [
+            [{'text': 'Я уже являюсь партнёром', 'callback_data': 'client_existing_partner'}],
+            [{'text': 'Регистрация партнёров', 'callback_data': 'client_new_partner'}],
+        ]
+    }
+    caption = ('<b>Такой email не найден среди партнёров Winline.\n\n'
+               'Если вы хотите стать партнёром — пройдите регистрацию на платформе.</b>')
+    resp = await session.post(f'{TELEGRAM_API}/sendPhoto', json={
+        'chat_id': user_id,
+        'photo': PHOTO_ID,
+        'caption': caption,
+        'parse_mode': 'HTML',
+        'reply_markup': START_KEYBOARD,
+    })
+    data = await resp.json()
+    if data.get('ok'):
+        return data['result']['message_id']
+    return None
+
+
+# ── POST /auth ───────────────────────────────────────────────────────────────
+
+async def auth_user(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return cors_headers(web.json_response({'error': 'Invalid JSON'}, status=400))
+
+    email = (body.get('email') or '').strip().lower()
+    user_id = body.get('user_id')
+
+    if not email or not user_id:
+        return cors_headers(web.json_response({'error': 'email and user_id are required'}, status=400))
+
+    try:
+        user_id = int(user_id)
+    except (ValueError, TypeError):
+        return cors_headers(web.json_response({'error': 'Invalid user_id'}, status=400))
+
+    # Check email in IAP API (if admin token is configured)
+    is_partner = True  # default: accept all emails if no IAP token
+    if IAP_ADMIN_TOKEN:
+        try:
+            is_partner = await _check_email_in_iap(email)
+        except Exception:
+            # If IAP check fails, accept the email anyway
+            is_partner = True
+
+    if not is_partner:
+        # Not a partner → send guest menu
+        try:
+            async with aiohttp.ClientSession() as tg_session:
+                user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
+                if user_data and user_data.menu_id:
+                    await tg_delete_message(tg_session, user_id, user_data.menu_id)
+                new_msg_id = await tg_send_guest_menu(tg_session, user_id)
+                if new_msg_id:
+                    await asyncio.to_thread(lambda: DB.User.update(mark=user_id, menu_id=new_msg_id))
+        except Exception:
+            pass
+        return cors_headers(web.json_response({
+            'ok': False,
+            'error': 'Email не найден среди партнёров Winline'
+        }, status=404))
+
+    # Partner found → save auth and send authorized menu
+    def _save_auth():
+        existing = DB.UserAuth.select(user_id)
+        if existing:
+            DB.UserAuth.update(user_id, email=email, token=None)
+        else:
+            DB.UserAuth.add(user_id, email, token=None)
+
+    await asyncio.to_thread(_save_auth)
+
+    try:
+        async with aiohttp.ClientSession() as tg_session:
+            user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
+            if user_data and user_data.menu_id:
+                await tg_delete_message(tg_session, user_id, user_data.menu_id)
+            new_msg_id = await tg_send_authorized_menu(tg_session, user_id, email)
+            if new_msg_id:
+                await asyncio.to_thread(lambda: DB.User.update(mark=user_id, menu_id=new_msg_id))
+    except Exception:
+        pass
+
+    return cors_headers(web.json_response({'ok': True, 'email': email}))
+
+
+async def _check_email_in_iap(email: str) -> bool:
+    """Check if email exists in IAP with partner status.
+    Returns True if partner found, False otherwise.
+    TODO: Update GraphQL query when IAP API structure is confirmed.
+    """
+    # Placeholder: will be updated with actual GraphQL query
+    # For now, tries to search affiliates by email
+    query = '''
+    query {
+        affiliates(filter: { email: "%s" }, limit: 1) {
+            items { id email status }
+        }
+    }
+    ''' % email.replace('"', '')
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'https://iap-demo.admon.pro/api/graphql',
+                headers={
+                    'Authorization': f'Bearer {IAP_ADMIN_TOKEN}',
+                    'Content-Type': 'application/json',
+                },
+                json={'query': query},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return True  # If API fails, accept email
+                data = await resp.json()
+                items = (data.get('data', {}).get('affiliates', {}).get('items') or [])
+                return len(items) > 0
+    except Exception:
+        return True  # On error, accept email
+
+
 # ── App setup ────────────────────────────────────────────────────────────────
 
 def make_app():
@@ -156,6 +333,7 @@ def make_app():
     app.router.add_get('/users/count', get_users_count)
     app.router.add_get('/broadcasts', get_broadcasts)
     app.router.add_post('/broadcasts', send_broadcast)
+    app.router.add_post('/auth', auth_user)
     return app
 
 

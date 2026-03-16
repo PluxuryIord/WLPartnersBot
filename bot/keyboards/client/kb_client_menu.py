@@ -35,8 +35,10 @@ registration_partners_menu = create_inline([
     ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
+AUTH_WEBAPP_URL = 'https://wlpartners.site/webapp/auth.html'
+
 auth_menu = create_inline([
-    ['Авторизоваться', 'call', 'client_auth_email'],
+    ['Авторизоваться', 'web_app', AUTH_WEBAPP_URL],
     ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
