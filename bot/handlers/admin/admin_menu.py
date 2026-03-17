@@ -34,10 +34,15 @@ async def admin_menu(call: CallbackQuery, state: FSMContext):
         await state.clear()
     if config.admin_filter:
         admin_role = 'Гл.Администратор' if config.admin_filter.is_system(call.from_user.id) else 'Администратор'
-        await call.message.edit_text(
+        try:
+            await call.message.delete()
+        except TelegramAPIError:
+            ...
+        new_menu = await call.message.answer(
             f'<b>✅Вы успешно авторизовались как {admin_role}</b>\n\n'
             '<i>Открыты доступные инструменты бота.</i>',
             reply_markup=kb_admin_menu.main_menu(DB.Admin.select(mark=call.from_user.id).access, admin_accesses))
+        DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     else:
         await client_main.back_menu(call=call, state=state)
     await call.answer()
