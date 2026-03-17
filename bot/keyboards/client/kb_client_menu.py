@@ -37,7 +37,6 @@ start_menu_admin = create_inline([
 registration_partners_menu = create_inline([
     ['Пройти регистрацию', 'url', 'https://partners.winline.ru'],
     ['Я уже зарегистрирован', 'call', 'client_already_registered'],
-    ['Помощь', 'call', 'client_reg_help'],
     ['🔙 Назад', 'call', 'client_back_to_start'],
 ], 1)
 
