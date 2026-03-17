@@ -51,14 +51,14 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
 async def group_menu(message: Message):
     """Main support menu — inline buttons."""
     await message.reply(
-        '<b>📋 Меню поддержки WL Partners</b>',
+        '<b>📋 Меню поддержки WINLINE PARTNERS</b>',
         reply_markup=kb_client_group.group_main_menu)
 
 
 async def group_main_menu_callback(call: CallbackQuery):
     """Return to main group menu from any section."""
     await call.message.edit_text(
-        '<b>📋 Меню поддержки WL Partners</b>',
+        '<b>📋 Меню поддержки WINLINE PARTNERS</b>',
         reply_markup=kb_client_group.group_main_menu)
     await call.answer()
 
