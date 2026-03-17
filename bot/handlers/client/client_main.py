@@ -71,11 +71,12 @@ async def main_menu(update: Union[Message, CallbackQuery],
         DB.User.add(user.id, update.from_user.full_name, user.username, thread_id)
         if config.admin_filter.is_system(user.id):
             config.admin_filter.add_admin(user.id, 0, admin_access.full_admin_access)
+        is_admin = config.admin_filter.is_admin(user.id)
         if DB.Settings.select().event_starts:
-            kb = kb_client_menu.event_menu
+            kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
             caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
         else:
-            kb = kb_client_menu.start_menu
+            kb = kb_client_menu.start_menu_admin if is_admin else kb_client_menu.start_menu
             caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
                            'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
                            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
@@ -100,21 +101,23 @@ async def main_menu(update: Union[Message, CallbackQuery],
             new_menu_id = await bot.send_message(user.id, '<b>ℹ️Открыто меню из рассылки</b>',
                                                  reply_markup=kb_client_menu.back_menu)
         else:
+            is_admin = config.admin_filter.is_admin(user.id)
             auth_data = DB.UserAuth.select(user.id)
             if auth_data:
                 email_text = f'\n\n📧 <b>Email:</b> {auth_data.email}' if auth_data.email else ''
+                kb = kb_client_menu.authorized_menu_admin if is_admin else kb_client_menu.authorized_menu
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=f'<b>✅ Вы авторизованы</b>{email_text}',
                     photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
-                    reply_markup=kb_client_menu.authorized_menu)
+                    reply_markup=kb)
             else:
                 # Not authorized → show start menu or event menu
                 if DB.Settings.select().event_starts:
-                    kb = kb_client_menu.event_menu
+                    kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
                     caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
                 else:
-                    kb = kb_client_menu.start_menu
+                    kb = kb_client_menu.start_menu_admin if is_admin else kb_client_menu.start_menu
                     caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
                                    'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
                                    'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
@@ -133,9 +136,11 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
     if await state.get_state():
         await state.clear()
     user_data = DB.User.select(call.from_user.id)
+    is_admin = config.admin_filter.is_admin(call.from_user.id)
     auth_data = DB.UserAuth.select(call.from_user.id)
     if auth_data:
         email_text = f'\n\n📧 <b>Email:</b> {auth_data.email}' if auth_data.email else ''
+        kb = kb_client_menu.authorized_menu_admin if is_admin else kb_client_menu.authorized_menu
         try:
             await call.message.delete()
         except TelegramAPIError:
@@ -144,21 +149,26 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
             chat_id=call.from_user.id,
             caption=f'<b>✅ Вы авторизованы</b>{email_text}',
             photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
-            reply_markup=kb_client_menu.authorized_menu)
+            reply_markup=kb)
         DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     else:
         try:
             await call.message.delete()
         except TelegramAPIError:
             ...
-        caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
-                       'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
-                       'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+        if DB.Settings.select().event_starts:
+            kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
+            caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
+        else:
+            kb = kb_client_menu.start_menu_admin if is_admin else kb_client_menu.start_menu
+            caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                           'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                           'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
         new_menu = await bot.send_photo(
             chat_id=call.from_user.id,
             caption=caption_text,
             photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
-            reply_markup=kb_client_menu.start_menu)
+            reply_markup=kb)
         DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     await call.answer()
 
@@ -364,11 +374,13 @@ async def process_auth_email(message: Message, state: FSMContext):
         except TelegramAPIError:
             ...
 
+    is_admin = config.admin_filter.is_admin(user_id)
+    kb = kb_client_menu.authorized_menu_admin if is_admin else kb_client_menu.authorized_menu
     new_menu = await bot.send_photo(
         chat_id=user_id,
         caption=f'<b>✅ Вы авторизованы</b>\n\n📧 <b>Email:</b> {email}',
         photo='AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ',
-        reply_markup=kb_client_menu.authorized_menu)
+        reply_markup=kb)
     DB.User.update(mark=user_id, menu_id=new_menu.message_id)
 
 

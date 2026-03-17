@@ -171,6 +171,25 @@ AUTHORIZED_KEYBOARD = {
     ]
 }
 
+AUTHORIZED_KEYBOARD_ADMIN = {
+    'inline_keyboard': [
+        [{'text': 'База знаний', 'callback_data': 'client_knowledge_base'}],
+        [{'text': 'Офферы', 'callback_data': 'client_offers'}],
+        [{'text': 'Социальные сети', 'callback_data': 'client_socials'}],
+        [{'text': 'Актуальные промо и ссылки', 'callback_data': 'client_promo'}],
+        [{'text': 'Чат с менеджером', 'callback_data': 'client_chat_manager'}],
+        [{'text': 'Я на мероприятии!', 'callback_data': 'client_at_event'}],
+        [{'text': '⚙️ Меню администратора', 'callback_data': 'admin_menu'}],
+        [{'text': '🚪 Выйти из аккаунта', 'callback_data': 'client_logout'}],
+    ]
+}
+
+
+def _is_admin(user_id: int) -> bool:
+    """Check if user is admin via DB."""
+    admin = DB.Admin.select(mark=user_id)
+    return admin is not None
+
 PHOTO_ID = 'AgACAgIAAxkBAAJ1zWhdevQQMSnK7IPyyuQVbD13znboAAJI9jEbyLfpSung7LZvwELaAQADAgADeAADNgQ'
 
 
@@ -182,15 +201,16 @@ async def tg_delete_message(session, chat_id, message_id):
         pass
 
 
-async def tg_send_authorized_menu(session, user_id, email):
+async def tg_send_authorized_menu(session, user_id, email, is_admin=False):
     email_text = f'\n\n📧 <b>Email:</b> {email}' if email else ''
     caption = f'<b>✅ Вы авторизованы</b>{email_text}'
+    kb = AUTHORIZED_KEYBOARD_ADMIN if is_admin else AUTHORIZED_KEYBOARD
     resp = await session.post(f'{TELEGRAM_API}/sendPhoto', json={
         'chat_id': user_id,
         'photo': PHOTO_ID,
         'caption': caption,
         'parse_mode': 'HTML',
-        'reply_markup': AUTHORIZED_KEYBOARD,
+        'reply_markup': kb,
     })
     data = await resp.json()
     if data.get('ok'):
@@ -281,7 +301,8 @@ async def auth_user(request):
             user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
             if user_data and user_data.menu_id:
                 await tg_delete_message(tg_session, user_id, user_data.menu_id)
-            new_msg_id = await tg_send_authorized_menu(tg_session, user_id, email)
+            admin_flag = await asyncio.to_thread(lambda: _is_admin(user_id))
+            new_msg_id = await tg_send_authorized_menu(tg_session, user_id, email, is_admin=admin_flag)
             if new_msg_id:
                 await asyncio.to_thread(lambda: DB.User.update(mark=user_id, menu_id=new_msg_id))
     except Exception:

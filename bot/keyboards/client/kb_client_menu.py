@@ -28,6 +28,12 @@ start_menu = create_inline([
     ['Регистрация партнёров', 'call', 'client_new_partner'],
 ], 1)
 
+start_menu_admin = create_inline([
+    ['Я уже являюсь партнёром', 'call', 'client_existing_partner'],
+    ['Регистрация партнёров', 'call', 'client_new_partner'],
+    ['⚙️ Меню администратора', 'call', 'admin_menu'],
+], 1)
+
 registration_partners_menu = create_inline([
     ['Пройти регистрацию', 'url', 'https://partners.winline.ru'],
     ['Я уже зарегистрирован', 'call', 'client_already_registered'],
@@ -46,6 +52,11 @@ event_menu = create_inline([
     ['Заполнить анкету', 'call', 'client_event_anketa'],
 ], 1)
 
+event_menu_admin = create_inline([
+    ['Заполнить анкету', 'call', 'client_event_anketa'],
+    ['⚙️ Меню администратора', 'call', 'admin_menu'],
+], 1)
+
 event_qr_new_menu = create_inline([
     ['Стать партнёром', 'call', 'client_new_partner'],
 ], 1)
@@ -57,6 +68,17 @@ authorized_menu = create_inline([
     ['Актуальные промо и ссылки', 'call', 'client_promo'],
     ['Чат с менеджером', 'call', 'client_chat_manager'],
     ['Я на мероприятии!', 'call', 'client_at_event'],
+    ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
+], 1)
+
+authorized_menu_admin = create_inline([
+    ['База знаний', 'call', 'client_knowledge_base'],
+    ['Офферы', 'call', 'client_offers'],
+    ['Социальные сети', 'call', 'client_socials'],
+    ['Актуальные промо и ссылки', 'call', 'client_promo'],
+    ['Чат с менеджером', 'call', 'client_chat_manager'],
+    ['Я на мероприятии!', 'call', 'client_at_event'],
+    ['⚙️ Меню администратора', 'call', 'admin_menu'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
 
