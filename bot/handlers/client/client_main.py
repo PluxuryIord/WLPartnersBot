@@ -309,9 +309,17 @@ async def existing_partner(call: CallbackQuery):
 
 async def new_partner(call: CallbackQuery):
     await call.message.edit_caption(
-        caption='<b>Чтобы стать партнёром — необходимо пройти регистрацию на '
-                '<a href="https://partners.winline.ru">платформе</a>. '
-                'Бот поможет пройти все необходимые шаги</b>',
+        caption=(
+            '<b>Чтобы начать сотрудничество с WINLINE Partners, Вам нужно перейти на '
+            '<a href="https://partners.winline.ru">официальный сайт партнерской программы</a> '
+            'и зарегистрироваться.</b>\n\n'
+            'При регистрации укажите следующую информацию:\n'
+            '• имя и фамилию;\n'
+            '• свой email;\n'
+            '• пароль.\n\n'
+            'После заполнения заявки нажмите кнопку «Регистрация» и подтвердите '
+            'регистрацию аккаунта по email.'
+        ),
         reply_markup=kb_client_menu.registration_partners_menu)
     await call.answer()
 
