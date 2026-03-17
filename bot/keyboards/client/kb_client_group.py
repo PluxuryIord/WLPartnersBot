@@ -27,3 +27,33 @@ def back_to_kb_with_ids(message_ids: list[int]):
     return create_inline([
         ['🔙 К базе знаний', 'call', f'group_kb_back:{ids_str}'],
     ], 1)
+
+
+# ── PM (private message) keyboards ──────────────────────────────────────────
+
+pm_knowledge_base_menu = create_inline([
+    ['Обзор личного кабинета', 'call', 'pm_kb_lk_overview'],
+    ['Информация по офферу', 'call', 'pm_kb_offer_info'],
+    ['Генерация реф.ссылки', 'call', 'pm_kb_ref_link'],
+    ['Настройка постбэка', 'call', 'pm_kb_postback'],
+    ['Скачивание отчета', 'call', 'pm_kb_download_report'],
+    ['🔙 Меню', 'call', 'client_back_menu'],
+], 1)
+
+pm_back_to_knowledge_base = create_inline([
+    ['🔙 К базе знаний', 'call', 'pm_knowledge_base'],
+], 1)
+
+
+def pm_back_to_kb_with_ids(message_ids: list[int]):
+    """PM back button that stores all message IDs to delete when pressed."""
+    ids_str = ','.join(str(mid) for mid in message_ids)
+    return create_inline([
+        ['🔙 К базе знаний', 'call', f'pm_kb_back:{ids_str}'],
+    ], 1)
+
+
+pm_promo_menu = create_inline([
+    ['Открыть промо материалы', 'url', 'https://winline.tv/m/banner'],
+    ['🔙 Меню', 'call', 'client_back_menu'],
+], 1)

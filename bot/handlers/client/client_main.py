@@ -388,6 +388,135 @@ async def authorized_stub(call: CallbackQuery):
     await call.answer('🔧 Функционал в разработке', show_alert=True)
 
 
+# ── PM: База знаний & Промо ─────────────────────────────────────────────────
+
+from bot.keyboards.client import kb_client_group
+
+PM_KB_KEYS = {
+    'pm_kb_lk_overview': 'lk_overview',
+    'pm_kb_offer_info': 'offer_info',
+    'pm_kb_ref_link': 'ref_link',
+    'pm_kb_postback': 'postback',
+    'pm_kb_download_report': 'download_report',
+}
+
+
+async def pm_knowledge_base(call: CallbackQuery):
+    """Show knowledge base menu in PM."""
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    new_menu = await bot.send_message(
+        chat_id=call.from_user.id,
+        text='<b>📚 База знаний</b>\n\n<i>Выберите интересующую тему:</i>',
+        reply_markup=kb_client_group.pm_knowledge_base_menu)
+    DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+    await call.answer()
+
+
+async def pm_kb_subtopic(call: CallbackQuery):
+    """Handle individual KB subtopic in PM."""
+    key = call.data
+    kb = bot_texts.knowledge_base
+    text_key = PM_KB_KEYS.get(key)
+    text = kb.get(text_key, '<b>Информация не найдена</b>') if text_key else '<b>Информация не найдена</b>'
+
+    photo_postback = kb.get('postback_photo') or None
+    photo_report = kb.get('report_photo') or None
+    photo_report_2 = kb.get('report_photo_2') or None
+
+    chat_id = call.from_user.id
+    sent_ids = []
+
+    if key == 'pm_kb_postback' and photo_postback:
+        await call.message.delete()
+        msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_postback)
+        sent_ids.append(msg1.message_id)
+        msg2 = await bot.send_message(
+            chat_id=chat_id, text=text,
+            reply_markup=kb_client_group.pm_back_to_kb_with_ids(sent_ids))
+        sent_ids.append(msg2.message_id)
+    elif key == 'pm_kb_download_report':
+        await call.message.delete()
+        text_2 = kb.get('download_report_2', '')
+        if photo_report:
+            msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_report)
+            sent_ids.append(msg1.message_id)
+        msg2 = await bot.send_message(chat_id=chat_id, text=text)
+        sent_ids.append(msg2.message_id)
+        if text_2:
+            if photo_report_2:
+                msg3 = await bot.send_photo(chat_id=chat_id, photo=photo_report_2)
+                sent_ids.append(msg3.message_id)
+            msg4 = await bot.send_message(
+                chat_id=chat_id, text=text_2,
+                reply_markup=kb_client_group.pm_back_to_kb_with_ids(sent_ids))
+            sent_ids.append(msg4.message_id)
+        else:
+            msg_back = await bot.send_message(
+                chat_id=chat_id, text='⬇️',
+                reply_markup=kb_client_group.pm_back_to_kb_with_ids(sent_ids))
+            sent_ids.append(msg_back.message_id)
+    else:
+        await call.message.edit_text(
+            text, reply_markup=kb_client_group.pm_back_to_knowledge_base)
+    await call.answer()
+
+
+async def pm_kb_back_to_menu(call: CallbackQuery):
+    """Return to KB menu from subtopic in PM."""
+    await call.message.edit_text(
+        '<b>📚 База знаний</b>\n\n<i>Выберите интересующую тему:</i>',
+        reply_markup=kb_client_group.pm_knowledge_base_menu)
+    await call.answer()
+
+
+async def pm_kb_back(call: CallbackQuery):
+    """Back from multi-part KB topic in PM — delete all, show KB menu."""
+    ids_part = call.data.split(':', 1)[1] if ':' in call.data else ''
+    message_ids = []
+    for mid_str in ids_part.split(','):
+        try:
+            message_ids.append(int(mid_str.strip()))
+        except ValueError:
+            pass
+
+    chat_id = call.from_user.id
+    for mid in message_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
+    if call.message.message_id not in message_ids:
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+
+    new_menu = await bot.send_message(
+        chat_id=chat_id,
+        text='<b>📚 База знаний</b>\n\n<i>Выберите интересующую тему:</i>',
+        reply_markup=kb_client_group.pm_knowledge_base_menu)
+    DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+    await call.answer()
+
+
+async def pm_promo(call: CallbackQuery):
+    """Show promo in PM."""
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    new_menu = await bot.send_message(
+        chat_id=call.from_user.id,
+        text='<b>📢 Актуальные промо материалы</b>\n\n'
+             'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.',
+        reply_markup=kb_client_group.pm_promo_menu)
+    DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+    await call.answer()
+
+
 async def at_event(call: CallbackQuery):
     settings = DB.Settings.select()
     if not settings.event_starts:
@@ -686,10 +815,13 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(new_partner, F.data == 'client_new_partner')
     dp.callback_query.register(already_registered, F.data == 'client_already_registered')
     dp.callback_query.register(start_auth_email, F.data == 'client_auth_email')
-    dp.callback_query.register(authorized_stub, F.data == 'client_knowledge_base')
+    dp.callback_query.register(pm_knowledge_base, F.data == 'client_knowledge_base')
+    dp.callback_query.register(pm_kb_back_to_menu, F.data == 'pm_knowledge_base')
+    dp.callback_query.register(pm_kb_back, F.data.startswith('pm_kb_back:'))
+    dp.callback_query.register(pm_kb_subtopic, F.data.startswith('pm_kb_'))
     dp.callback_query.register(authorized_stub, F.data == 'client_offers')
     dp.callback_query.register(authorized_stub, F.data == 'client_socials')
-    dp.callback_query.register(authorized_stub, F.data == 'client_promo')
+    dp.callback_query.register(pm_promo, F.data == 'client_promo')
     dp.callback_query.register(authorized_stub, F.data == 'client_chat_manager')
     dp.callback_query.register(at_event, F.data == 'client_at_event')
     dp.callback_query.register(logout, F.data == 'client_logout')
