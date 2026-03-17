@@ -510,6 +510,25 @@ async def pm_kb_back(call: CallbackQuery):
     await call.answer()
 
 
+async def pm_socials(call: CallbackQuery):
+    """Show social networks in PM."""
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    socials_menu = kb_client_group.create_inline([
+        ['@WinlinePartners', 'url', 'https://t.me/WinlinePartners'],
+        ['🔙 Меню', 'call', 'client_back_menu'],
+    ], 1)
+    new_menu = await bot.send_message(
+        chat_id=call.from_user.id,
+        text='<b>📱 Социальные сети</b>\n\n'
+             'Наш официальный канал в Telegram, чтобы быть в курсе новостей:',
+        reply_markup=socials_menu)
+    DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+    await call.answer()
+
+
 async def pm_promo(call: CallbackQuery):
     """Show promo in PM."""
     try:
@@ -828,9 +847,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(pm_kb_back, F.data.startswith('pm_kb_back:'))
     dp.callback_query.register(pm_kb_subtopic, F.data.startswith('pm_kb_'))
     dp.callback_query.register(authorized_stub, F.data == 'client_offers')
-    dp.callback_query.register(authorized_stub, F.data == 'client_socials')
+    dp.callback_query.register(pm_socials, F.data == 'client_socials')
     dp.callback_query.register(pm_promo, F.data == 'client_promo')
-    dp.callback_query.register(authorized_stub, F.data == 'client_chat_manager')
     dp.callback_query.register(at_event, F.data == 'client_at_event')
     dp.callback_query.register(logout, F.data == 'client_logout')
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')

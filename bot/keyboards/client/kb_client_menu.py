@@ -63,7 +63,7 @@ authorized_menu = create_inline([
     ['Офферы', 'call', 'client_offers'],
     ['Социальные сети', 'call', 'client_socials'],
     ['Актуальные промо и ссылки', 'call', 'client_promo'],
-    ['Чат с менеджером', 'call', 'client_chat_manager'],
+    ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
     ['Я на мероприятии!', 'call', 'client_at_event'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
@@ -73,7 +73,7 @@ authorized_menu_admin = create_inline([
     ['Офферы', 'call', 'client_offers'],
     ['Социальные сети', 'call', 'client_socials'],
     ['Актуальные промо и ссылки', 'call', 'client_promo'],
-    ['Чат с менеджером', 'call', 'client_chat_manager'],
+    ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
     ['Я на мероприятии!', 'call', 'client_at_event'],
     ['⚙️ Меню администратора', 'call', 'admin_menu'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
