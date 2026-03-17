@@ -4,8 +4,8 @@ from bot.utils.telegram import create_inline
 
 group_main_menu = create_inline([
     ['📢 Промо материалы', 'call', 'group_promo'],
-    ['📅 Календарь', 'call', 'group_calendar'],
-    ['🌐 Лендинги', 'call', 'group_landings'],
+    ['📅 Календарь спорт. событий', 'call', 'group_calendar'],
+    ['🌐 Актуальные лендинги', 'call', 'group_landings'],
     ['📚 База знаний', 'call', 'group_knowledge_base'],
 ], 1)
 
