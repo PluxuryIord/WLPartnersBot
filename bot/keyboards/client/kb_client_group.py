@@ -1,11 +1,26 @@
 from bot.utils.telegram import create_inline
 
+# ── Group main menu ──────────────────────────────────────────────────────────
+
+group_main_menu = create_inline([
+    ['📢 Промо материалы', 'call', 'group_promo'],
+    ['📅 Календарь', 'call', 'group_calendar'],
+    ['🌐 Лендинги', 'call', 'group_landings'],
+    ['📚 База знаний', 'call', 'group_knowledge_base'],
+], 1)
+
 promo_menu = create_inline([
     ['Открыть промо материалы', 'url', 'https://winline.tv/m/banner'],
+    ['🔙 Меню', 'call', 'group_main_menu'],
 ], 1)
 
 calendar_menu = create_inline([
     ['Открыть календарь', 'url', 'https://docs.google.com/spreadsheets/d/1zMg4sJlUUD2I-SPEUc7MRC6rRkbZHWpBju0vGlzNeIo/edit?gid=0#gid=0'],
+    ['🔙 Меню', 'call', 'group_main_menu'],
+], 1)
+
+landings_menu = create_inline([
+    ['🔙 Меню', 'call', 'group_main_menu'],
 ], 1)
 
 knowledge_base_menu = create_inline([
@@ -14,6 +29,7 @@ knowledge_base_menu = create_inline([
     ['Генерация реф.ссылки', 'call', 'group_kb_ref_link'],
     ['Настройка постбэка', 'call', 'group_kb_postback'],
     ['Скачивание отчета', 'call', 'group_kb_download_report'],
+    ['🔙 Меню', 'call', 'group_main_menu'],
 ], 1)
 
 back_to_knowledge_base = create_inline([

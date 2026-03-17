@@ -49,13 +49,18 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
 # ── Group chat commands ───────────────────────────────────────────────────────
 
 async def group_menu(message: Message):
-    """Main support menu — list of commands."""
+    """Main support menu — inline buttons."""
     await message.reply(
-        '<b>📋 Меню поддержки WL Partners</b>\n\n'
-        '/promo — Актуальные промо материалы\n'
-        '/calendar — Календарь\n'
-        '/landings — Актуальные лендинги\n'
-        '/kb — База знаний')
+        '<b>📋 Меню поддержки WL Partners</b>',
+        reply_markup=kb_client_group.group_main_menu)
+
+
+async def group_main_menu_callback(call: CallbackQuery):
+    """Return to main group menu from any section."""
+    await call.message.edit_text(
+        '<b>📋 Меню поддержки WL Partners</b>',
+        reply_markup=kb_client_group.group_main_menu)
+    await call.answer()
 
 
 async def group_promo_cmd(message: Message):
@@ -66,6 +71,15 @@ async def group_promo_cmd(message: Message):
         reply_markup=kb_client_group.promo_menu)
 
 
+async def group_promo_callback(call: CallbackQuery):
+    """Промо через callback."""
+    await call.message.edit_text(
+        '<b>📢 Актуальные промо материалы</b>\n\n'
+        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.',
+        reply_markup=kb_client_group.promo_menu)
+    await call.answer()
+
+
 async def group_calendar_cmd(message: Message):
     """Календарь."""
     await message.reply(
@@ -74,10 +88,35 @@ async def group_calendar_cmd(message: Message):
         reply_markup=kb_client_group.calendar_menu)
 
 
+async def group_calendar_callback(call: CallbackQuery):
+    """Календарь через callback."""
+    await call.message.edit_text(
+        '<b>📅 Календарь</b>\n\n'
+        'Перейдите по ссылке для просмотра актуального календаря.',
+        reply_markup=kb_client_group.calendar_menu)
+    await call.answer()
+
+
 async def group_landings_cmd(message: Message):
     """Актуальные лендинги."""
     text = bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>')
     await message.reply(text, disable_web_page_preview=True)
+
+
+async def group_landings_callback(call: CallbackQuery):
+    """Лендинги через callback."""
+    text = bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>')
+    try:
+        await call.message.edit_text(
+            text, disable_web_page_preview=True,
+            reply_markup=kb_client_group.landings_menu)
+    except Exception:
+        await call.message.delete()
+        await bot.send_message(
+            chat_id=call.message.chat.id, text=text,
+            disable_web_page_preview=True,
+            reply_markup=kb_client_group.landings_menu)
+    await call.answer()
 
 
 async def group_kb_cmd(message: Message):
@@ -210,6 +249,12 @@ def register_handlers_client_group(dp: Dispatcher):
     dp.message.register(group_calendar_cmd, Command(commands=['calendar']), group_filter)
     dp.message.register(group_landings_cmd, Command(commands=['landings']), group_filter)
     dp.message.register(group_kb_cmd, Command(commands=['kb']), group_filter)
+
+    # Group menu callbacks
+    dp.callback_query.register(group_main_menu_callback, F.data == 'group_main_menu')
+    dp.callback_query.register(group_promo_callback, F.data == 'group_promo')
+    dp.callback_query.register(group_calendar_callback, F.data == 'group_calendar')
+    dp.callback_query.register(group_landings_callback, F.data == 'group_landings')
 
     # Knowledge base callbacks
     dp.callback_query.register(group_kb_cmd_callback, F.data == 'group_knowledge_base')
