@@ -1,0 +1,17 @@
+apt update
+apt upgrade
+apt install python3-pip
+apt install -y build-essential libssl-dev libffi-dev python3-dev
+apt install -y python3-venv
+apt install pkg-config
+apt-get install libmysqlclient-dev
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install cryptography
+
+# /etc/systemd/system/
+systemctl start /root/bot/bot.service
+systemctl enable /root/bot/bot.service
+service bot start
+

@@ -1,0 +1,15 @@
+[Unit]
+Description=WLPartners Admin API
+After=syslog.target
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/WLPartners/
+ExecStart=/root/WLPartners/venv/bin/python3 admin_api.py
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

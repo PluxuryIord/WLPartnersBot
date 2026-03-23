@@ -1,0 +1,34 @@
+"""
+AUTHOR CODE - V1N3R
+TG: @v1n3r
+Site Company: buy-bot.ru
+"""
+
+from aiogram import Bot
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+
+# Bot Default Commands
+default_commands = [
+    ['start', '💻 Главное меню']
+]
+
+group_commands = [
+    ['menu', '📋 Меню поддержки'],
+    ['promo', '📢 Актуальные промо материалы'],
+    ['calendar', '📅 Календарь'],
+    ['landings', '🌐 Актуальные лендинги'],
+    ['kb', '📚 База знаний'],
+]
+
+
+# Startup set bot-menu commands
+async def set_menu_commands(bot_command: Bot) -> None:
+    commands = []
+    for command in default_commands:
+        commands.append(BotCommand(command=command[0], description=command[1]))
+    await bot_command.set_my_commands(commands=commands, scope=BotCommandScopeAllPrivateChats())
+
+    group_cmds = []
+    for command in group_commands:
+        group_cmds.append(BotCommand(command=command[0], description=command[1]))
+    await bot_command.set_my_commands(commands=group_cmds, scope=BotCommandScopeAllGroupChats())
