@@ -861,28 +861,12 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
         DB.User.update(mark=user_id, menu_id=new_menu.message_id)
         return new_menu
 
-    # Get event_code from DB for caption
-    event_code = ''
-    try:
-        _db_cfg = {
-            'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
-            'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
-            'database': os.getenv('MYSQL_DATABASE', ''),
-        }
-        conn = mysql.connector.connect(**_db_cfg)
-        cur = conn.cursor(dictionary=True)
-        cur.execute('SELECT code FROM wl_event_codes WHERE user_id = %s AND status = %s LIMIT 1', (user_id, 'active'))
-        row = cur.fetchone()
-        if row:
-            event_code = row['code']
-        conn.close()
-    except Exception as e:
-        logger.debug(f"Suppressed: {e}")
+    # Get event code (reuse helper)
+    event_code = await get_or_create_event_code(user_id) or ''
 
     reply_markup = kb_client_menu.back_menu if is_partner else kb_client_menu.event_qr_new_menu
     
     # Download QR card from panel server
-    import aiohttp
     qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
     qr_path = f"files/{user_id}_card.png"
     try:
