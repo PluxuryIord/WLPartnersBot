@@ -130,7 +130,7 @@ async def main_menu(update: Union[Message, CallbackQuery],
             auth_data = DB.UserAuth.select(user.id)
             if auth_data:
                 email_text = f'\n\n📧 <b>Email:</b> {auth_data.email}' if auth_data.email else ''
-                kb = kb_client_menu.get_authorized_menu(is_admin)
+                kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts)
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=get_text('auth_flow', 'auth_success', email=auth_data.email) or f'<b>✅ Вы авторизованы</b>{email_text}',
@@ -166,7 +166,7 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
     auth_data = DB.UserAuth.select(call.from_user.id)
     if auth_data:
         email_text = f'\n\n📧 <b>Email:</b> {auth_data.email}' if auth_data.email else ''
-        kb = kb_client_menu.get_authorized_menu(is_admin)
+        kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts)
         try:
             await call.message.delete()
         except TelegramAPIError:
@@ -410,7 +410,7 @@ async def process_auth_email(message: Message, state: FSMContext):
             ...
 
     is_admin = config.admin_filter.is_admin(user_id)
-    kb = kb_client_menu.get_authorized_menu(is_admin)
+    kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts)
     new_menu = await bot.send_photo(
         chat_id=user_id,
         caption=get_text('auth_flow', 'auth_success', email=email) or f'<b>✅ Вы авторизованы</b>\n\n📧 <b>Email:</b> {email}',

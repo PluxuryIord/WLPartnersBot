@@ -75,17 +75,54 @@ auth_menu = create_inline([
 ], 1)
 
 
-def get_authorized_menu(is_admin=False):
-    extra = [['⚙️ Меню администратора', 'call', 'admin_menu']] if is_admin else None
-    return _kb_or_fallback('main_menu', [
+def get_authorized_menu(is_admin=False, event_active=False):
+    extra = []
+    if is_admin:
+        extra.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
+    
+    fallback = [
         ['База знаний', 'call', 'client_knowledge_base'],
         ['Информация по офферу', 'call', 'client_offers'],
         ['Актуальные крео и лендинги', 'call', 'client_promo'],
         ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
         ['Наши соц. сети', 'call', 'client_socials'],
-        ['Я на мероприятии!', 'call', 'client_at_event'],
-        ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
-    ], extra=extra)
+    ]
+    if event_active:
+        fallback.append(['Я на мероприятии!', 'call', 'client_at_event'])
+    fallback.append(['🚪 Выйти из аккаунта', 'call', 'client_logout'])
+    
+    # Dynamic KB also needs filtering
+    from bot.utils.dynamic_kb import get_screen_kb
+    kb = get_screen_kb('main_menu', extra_buttons=extra)
+    if kb and not event_active:
+        # Rebuild without event button
+        from bot.utils.dynamic_kb import _load
+        data = _load()
+        screens = data.get('screens', {})
+        screen = screens.get('main_menu')
+        if screen and screen.get('buttons'):
+            from bot.utils.telegram import create_inline
+            buttons_def = screen['buttons']
+            order = buttons_def.get('_order', [])
+            buttons = []
+            for key in order:
+                btn = buttons_def.get(key)
+                if not btn:
+                    continue
+                action = btn.get('action', '')
+                label = btn.get('label', '???')
+                if 'client_at_event' in action and not event_active:
+                    continue
+                if action.startswith('url:'):
+                    buttons.append([label, 'url', action[4:]])
+                elif action.startswith('callback:'):
+                    buttons.append([label, 'call', action[9:]])
+                else:
+                    buttons.append([label, 'call', action])
+            buttons.extend(extra)
+            return create_inline(buttons, 1)
+    
+    return _kb_or_fallback('main_menu', fallback, extra=extra if not kb else None)
 
 authorized_menu = create_inline([
     ['База знаний', 'call', 'client_knowledge_base'],
