@@ -61,3 +61,42 @@ def get_screen_kb(screen_id, extra_buttons=None, cols=1):
     if not buttons:
         return None
     return create_inline(buttons, cols)
+
+
+def get_screen_kb_filtered(screen_id, extra_buttons=None, skip_actions=None, cols=1):
+    """Like get_screen_kb but can skip buttons by action substring."""
+    data = _cache.get('data') or _load()
+    screens = data.get('screens', {})
+    screen = screens.get(screen_id)
+    if not screen or not screen.get('buttons'):
+        return None
+
+    buttons_def = screen['buttons']
+    order = buttons_def.get('_order', [])
+    skip = skip_actions or []
+    
+    buttons = []
+    for key in order:
+        btn = buttons_def.get(key)
+        if not btn:
+            continue
+        action = btn.get('action', '')
+        label = btn.get('label', '???')
+        
+        # Skip if action matches any skip pattern
+        if any(s in action for s in skip):
+            continue
+        
+        if action.startswith('url:'):
+            buttons.append([label, 'url', action[4:]])
+        elif action.startswith('callback:'):
+            buttons.append([label, 'call', action[9:]])
+        else:
+            buttons.append([label, 'call', action])
+
+    if extra_buttons:
+        buttons.extend(extra_buttons)
+
+    if not buttons:
+        return None
+    return create_inline(buttons, cols)
