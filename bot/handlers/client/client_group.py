@@ -37,7 +37,10 @@ async def _notify_panel_membership(chat_id: int, title: str, chat_type: str, act
     payload = {'chat_id': chat_id, 'title': title or '', 'chat_type': chat_type, 'action': action}
     headers = {'Content-Type': 'application/json'}
     if secret:
-        headers['x-webhook-secret'] = secret
+        import hashlib, hmac, json as _json
+        body_str = _json.dumps(payload, ensure_ascii=False)
+        sig = hmac.new(secret.encode(), body_str.encode(), hashlib.sha256).hexdigest()
+        headers['x-webhook-signature'] = sig
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(membership_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:

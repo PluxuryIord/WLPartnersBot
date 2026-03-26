@@ -7,6 +7,8 @@ Site Company: buy-bot.ru
 from __future__ import annotations
 import os
 import hashlib
+import qrcode
+import aiohttp
 import time
 import json as json_mod
 import asyncio
@@ -54,6 +56,8 @@ from aiogram.types import FSInputFile
 from aiogram.enums import ContentType, ChatMemberStatus
 import os
 import hashlib
+import qrcode
+import aiohttp
 import time
 import json as json_mod
 import asyncio
@@ -1101,6 +1105,37 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
     if state and await state.get_state():
         await state.clear()
     screen_id = call.data[3:]  # remove 'sc_' prefix
+    
+    # If target is a system screen, redirect to its handler
+    SYSTEM_REDIRECTS = {
+        'main_menu': 'client_back_menu',
+        'start_menu': 'client_back_to_start',
+        'auth_flow': 'client_existing_partner',
+        'registration_flow': 'client_new_partner',
+        'offer_page': 'client_offers',
+        'promo_page': 'client_promo',
+        'socials_page': 'client_socials',
+        'event_flow': 'client_at_event',
+        'logout_screen': 'client_logout',
+    }
+    if screen_id in SYSTEM_REDIRECTS:
+        # Rewrite callback data to system callback and let aiogram re-route
+        call.data = SYSTEM_REDIRECTS[screen_id]
+        handler_map = {
+            'client_back_menu': back_menu,
+            'client_back_to_start': back_to_start,
+            'client_existing_partner': existing_partner,
+            'client_new_partner': new_partner,
+            'client_offers': pm_offers,
+            'client_promo': pm_promo,
+            'client_socials': pm_socials,
+            'client_at_event': at_event,
+            'client_logout': logout,
+        }
+        handler = handler_map.get(SYSTEM_REDIRECTS[screen_id])
+        if handler:
+            return await handler(call, state) if 'state' in handler.__code__.co_varnames else await handler(call)
+        return await call.answer()
     
     # Get text from scenarios cache
     text = get_text(screen_id, 'main_text')

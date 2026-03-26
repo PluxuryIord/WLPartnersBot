@@ -95,7 +95,10 @@ async def _notify_admin_panel(message, album=None):
 
     headers = {'Content-Type': 'application/json'}
     if secret:
-        headers['x-webhook-secret'] = secret
+        import hashlib, hmac, json as _json
+        body_str = _json.dumps(payload, ensure_ascii=False)
+        sig = hmac.new(secret.encode(), body_str.encode(), hashlib.sha256).hexdigest()
+        headers['x-webhook-signature'] = sig
 
     try:
         async with aiohttp.ClientSession() as session:

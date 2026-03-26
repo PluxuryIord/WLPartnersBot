@@ -12,3 +12,9 @@ def get_settings_cached():
     _cache['settings'] = s
     _cache['ts'] = now
     return s
+
+
+def invalidate():
+    """Force next call to query DB."""
+    _cache['settings'] = None
+    _cache['ts'] = 0

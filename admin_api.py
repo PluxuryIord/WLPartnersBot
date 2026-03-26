@@ -26,7 +26,8 @@ IAP_ADMIN_TOKEN = env.str('IAP_ADMIN_TOKEN', '')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from bot.integrations import DB  # noqa: E402
-from bot.initialization.bot_texts.load_texts import bot_texts  # noqa: E402
+from bot.initialization.bot_texts.load_texts import bot_texts
+from bot.utils.settings_cache import invalidate as invalidate_settings  # noqa: E402
 
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.name == 'nt':
