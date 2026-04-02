@@ -54,19 +54,6 @@ from bot.utils.settings_cache import get_settings_cached
 from bot.utils.qr_with_text import generate_qr_with_text
 from aiogram.types import FSInputFile
 from aiogram.enums import ContentType, ChatMemberStatus
-import os
-import hashlib
-import qrcode
-import aiohttp
-import time
-import json as json_mod
-import asyncio
-import logging
-
-logger = logging.getLogger('wl_bot')
-import mysql.connector
-from io import BytesIO
-from aiogram.types import BufferedInputFile
 
 
 input_data = {
@@ -673,7 +660,7 @@ async def at_event(call: CallbackQuery):
 
 
     _db_cfg = {
-        'host': os.getenv('MYSQL_HOST', 'db.buy-bot.ru'), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
         'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
         'database': os.getenv('MYSQL_DATABASE', ''),
     }
@@ -712,7 +699,7 @@ async def at_event(call: CallbackQuery):
         # Download QR card from panel server
         qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
         try:
-            async with aiohttp.ClientSession() as _sess:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as _sess:
                 async with _sess.get(qr_card_url) as _resp:
                     if _resp.status == 200:
                         _card_data = await _resp.read()
@@ -799,7 +786,7 @@ async def _generate_event_qr(user_id: int) -> str:
     """Generate QR for event using wl_event_codes, return path."""
 
     _db_cfg = {
-        'host': os.getenv('MYSQL_HOST', 'db.buy-bot.ru'), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
         'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
         'database': os.getenv('MYSQL_DATABASE', ''),
     }
@@ -875,7 +862,7 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
     qr_path = f"files/{user_id}_card.png"
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.get(qr_card_url) as resp:
                 if resp.status == 200:
                     with open(qr_path, 'wb') as f_out:
@@ -1138,49 +1125,22 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
             return await handler(call, state) if 'state' in handler.__code__.co_varnames else await handler(call)
         return await call.answer()
     
-    # Get text and media from scenarios cache
     text = get_text(screen_id, 'main_text')
     if not text:
         text = '<b>Экран не найден</b>'
-    
-    # Get media URL if exists
-    media_url = None
-    try:
-        from bot.utils.dynamic_kb import _load
-        sc_data = _load()
-        screen = sc_data.get('screens', {}).get(screen_id, {})
-        msg = screen.get('messages', {}).get('main_text', {})
-        media = msg.get('media')
-        if media and media.get('url'):
-            media_url = media['url']
-    except Exception:
-        pass
-    
-    # Get keyboard from scenarios cache
+
     from bot.utils.dynamic_kb import get_screen_kb
     kb = get_screen_kb(screen_id)
     if not kb:
         from bot.keyboards.client import kb_client_menu
         kb = kb_client_menu.back_menu
-    
+
     try:
         await call.message.delete()
     except Exception as e:
         logger.debug(f"Suppressed: {e}")
-    
-    if media_url:
-        new_menu = await bot.send_photo(
-            chat_id=call.from_user.id,
-            photo=media_url,
-            caption=text,
-            reply_markup=kb
-        )
-    else:
-        new_menu = await bot.send_message(
-            chat_id=call.from_user.id,
-            text=text,
-            reply_markup=kb
-        )
+
+    new_menu = await send_screen_message(bot, call.from_user.id, screen_id, text, reply_markup=kb)
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     await call.answer()
 
@@ -1192,11 +1152,15 @@ async def poll_vote_handler(call: CallbackQuery):
         return await call.answer("Ошибка")
     _, poll_id, option_index = parts
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 "https://panel.wl-fdms.tw1.ru/api/broadcasts/poll-vote",
                 json={"poll_id": int(poll_id), "user_id": call.from_user.id, "option_index": int(option_index)}
             ) as resp:
+                if resp.status != 200:
+                    logger.error(f"[poll_vote] API returned {resp.status}")
+                    return await call.answer("Ошибка", show_alert=False)
                 data = await resp.json()
         if data.get("already_voted"):
             await call.answer("Vы уже голосовали", show_alert=False)
