@@ -37,10 +37,7 @@ async def _notify_panel_membership(chat_id: int, title: str, chat_type: str, act
     payload = {'chat_id': chat_id, 'title': title or '', 'chat_type': chat_type, 'action': action}
     headers = {'Content-Type': 'application/json'}
     if secret:
-        import hashlib, hmac, json as _json
-        body_str = _json.dumps(payload, ensure_ascii=False)
-        sig = hmac.new(secret.encode(), body_str.encode(), hashlib.sha256).hexdigest()
-        headers['x-webhook-signature'] = sig
+        headers['x-webhook-secret'] = secret
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(membership_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -76,7 +73,7 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
         existing = DB.GroupChat.select(mark=event.chat.id)
         if existing:
             DB.GroupChat.update(mark=event.chat.id, is_active=False)
-        await _notify_panel_membership(chat.id, chat.title or '', chat.type, 'removed')
+        await _notify_panel_membership(event.chat.id, event.chat.title or '', event.chat.type, 'removed')
 
 # ── Group chat commands ───────────────────────────────────────────────────────
 

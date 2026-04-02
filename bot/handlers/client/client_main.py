@@ -49,7 +49,7 @@ from bot.keyboards.admin import kb_admin_topic
 from bot.integrations import DB
 from bot.initialization import admin_access, config
 from bot.initialization import bot_texts
-from bot.utils.scenario_texts import get_text
+from bot.utils.scenario_texts import get_text, send_screen_message
 from bot.utils.settings_cache import get_settings_cached
 from bot.utils.qr_with_text import generate_qr_with_text
 from aiogram.types import FSInputFile
@@ -450,8 +450,8 @@ async def pm_offers(call: CallbackQuery):
         'Запрещённые тематики: adult контент, оружие, насилие, политика, детский контент и фигурирование детей рядом с брендом, трансляция лёгкого заработка, шокирующий контент, треш контент.\n\n'
         '<tg-emoji emoji-id="5249137793120107984">🔥</tg-emoji> <b>Рекламодатель имеет право пересмотреть условия оплаты или не оплатить трафик в случае обнаружения нарушений.</b>'
     )
-    new_menu = await bot.send_message(
-        chat_id=call.from_user.id,
+    new_menu = await send_screen_message(
+        bot, call.from_user.id, 'offer_page',
         text=offer_text,
         reply_markup=kb_client_group.create_inline([
             ['🔙 Меню', 'call', 'client_back_menu'],
@@ -563,8 +563,9 @@ async def pm_socials(call: CallbackQuery):
         ['@WinlinePartners', 'url', 'https://t.me/WinlinePartners'],
         ['🔙 Меню', 'call', 'client_back_menu'],
     ], 1)
-    new_menu = await bot.send_message(
-        chat_id=call.from_user.id,
+    new_menu = await send_screen_message(
+        bot, call.from_user.id, 'socials_page',
+        message_key='socials_text',
         text=get_text('socials_page', 'socials_text') or '<b>📱 Наши соц. сети</b>\n\nСкорее подписывайся на наш официальный канал в Telegram, чтобы быть в курсе новостей 👇',
         reply_markup=socials_menu)
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
@@ -1137,10 +1138,23 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
             return await handler(call, state) if 'state' in handler.__code__.co_varnames else await handler(call)
         return await call.answer()
     
-    # Get text from scenarios cache
+    # Get text and media from scenarios cache
     text = get_text(screen_id, 'main_text')
     if not text:
         text = '<b>Экран не найден</b>'
+    
+    # Get media URL if exists
+    media_url = None
+    try:
+        from bot.utils.dynamic_kb import _load
+        sc_data = _load()
+        screen = sc_data.get('screens', {}).get(screen_id, {})
+        msg = screen.get('messages', {}).get('main_text', {})
+        media = msg.get('media')
+        if media and media.get('url'):
+            media_url = media['url']
+    except Exception:
+        pass
     
     # Get keyboard from scenarios cache
     from bot.utils.dynamic_kb import get_screen_kb
@@ -1154,18 +1168,60 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.debug(f"Suppressed: {e}")
     
-    new_menu = await bot.send_message(
-        chat_id=call.from_user.id,
-        text=text,
-        reply_markup=kb
-    )
+    if media_url:
+        new_menu = await bot.send_photo(
+            chat_id=call.from_user.id,
+            photo=media_url,
+            caption=text,
+            reply_markup=kb
+        )
+    else:
+        new_menu = await bot.send_message(
+            chat_id=call.from_user.id,
+            text=text,
+            reply_markup=kb
+        )
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     await call.answer()
 
+
+
+async def poll_vote_handler(call: CallbackQuery):
+    parts = call.data.split(":")
+    if len(parts) != 3:
+        return await call.answer("Ошибка")
+    _, poll_id, option_index = parts
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://panel.wl-fdms.tw1.ru/api/broadcasts/poll-vote",
+                json={"poll_id": int(poll_id), "user_id": call.from_user.id, "option_index": int(option_index)}
+            ) as resp:
+                data = await resp.json()
+        if data.get("already_voted"):
+            await call.answer("Vы уже голосовали", show_alert=False)
+            return
+        correct = data.get("correct")
+        if correct is True:
+            await call.answer("Правильный ответ", show_alert=False)
+        elif correct is False:
+            await call.answer("Неправильный ответ", show_alert=False)
+        else:
+            await call.answer("Голос принят", show_alert=False)
+        result_text = data.get("resultText")
+        if result_text:
+            try:
+                await call.message.edit_text(result_text, parse_mode="HTML")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"[poll_vote] {e}")
+        await call.answer("Ошибка", show_alert=False)
+
 def register_handlers_client_main(dp: Dispatcher):
-    # Deep link /start event — BEFORE generic /start
     dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
+    dp.callback_query.register(poll_vote_handler, F.data.startswith('poll_vote:'))
     dp.callback_query.register(dynamic_screen_handler, F.data.startswith('sc_'))
     dp.callback_query.register(telegram.delete_message, F.data == 'client_delete_message')
     dp.callback_query.register(back_menu, F.data == 'client_back_menu')
@@ -1187,9 +1243,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(start_event_anketa_callback, F.data == 'client_event_anketa')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
-    # Email auth FSM handler
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
-    # Event anketa FSM handlers
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
     dp.callback_query.register(process_anketa_choice, F.data.startswith('anketa_choice:'), FsmEventAnketa.answering)
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
