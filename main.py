@@ -81,7 +81,7 @@ async def main() -> None:
     # Scheduler Tasks
     await start_scheduler_tasks()
 
-    # Start reload-texts HTTP server on the same event loop (no GIL issues)
+    # Start reload-texts HTTP server on the same event loop
     reload_server = await asyncio.start_server(_handle_reload_client, '0.0.0.0', 5050)
     print('Reload-texts server started on port 5050')
 
@@ -89,7 +89,16 @@ async def main() -> None:
 
     # Bot Startup
     await bot(DeleteWebhook(drop_pending_updates=True))
-    await dp.start_polling(bot)
+
+    # Run polling and reload HTTP server concurrently
+    async def _run_polling():
+        await dp.start_polling(bot)
+
+    async def _run_reload_server():
+        async with reload_server:
+            await reload_server.serve_forever()
+
+    await asyncio.gather(_run_polling(), _run_reload_server())
 
 
 if __name__ == "__main__":
