@@ -19,6 +19,7 @@ from bot.integrations import DB
 from bot.initialization import bot_texts
 from bot.utils.announce_bot import bot
 from bot.keyboards.client import kb_client_group
+from bot.utils.scenario_texts import get_text
 import logging
 import aiohttp
 from bot.initialization import config
@@ -79,33 +80,31 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
 
 async def group_menu(message: Message):
     """Main support menu — inline buttons."""
-    await message.reply(
-        '<b>📋 Меню поддержки WINLINE PARTNERS</b>',
-        reply_markup=kb_client_group.group_main_menu)
+    text = get_text('group_menu', 'menu_text') or '<b>📋 Меню поддержки WINLINE PARTNERS</b>'
+    await message.reply(text, reply_markup=kb_client_group.group_main_menu)
 
 
 async def group_main_menu_callback(call: CallbackQuery):
     """Return to main group menu from any section."""
-    await call.message.edit_text(
-        '<b>📋 Меню поддержки WINLINE PARTNERS</b>',
-        reply_markup=kb_client_group.group_main_menu)
+    text = get_text('group_menu', 'menu_text') or '<b>📋 Меню поддержки WINLINE PARTNERS</b>'
+    await call.message.edit_text(text, reply_markup=kb_client_group.group_main_menu)
     await call.answer()
 
 
 async def group_promo_cmd(message: Message):
     """Актуальные промо материалы."""
-    await message.reply(
+    text = get_text('group_promo', 'promo_text') or (
         '<b>📢 Актуальные промо материалы</b>\n\n'
-        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.',
-        reply_markup=kb_client_group.promo_menu)
+        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
+    await message.reply(text, reply_markup=kb_client_group.promo_menu)
 
 
 async def group_promo_callback(call: CallbackQuery):
     """Промо через callback."""
-    await call.message.edit_text(
+    text = get_text('group_promo', 'promo_text') or (
         '<b>📢 Актуальные промо материалы</b>\n\n'
-        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.',
-        reply_markup=kb_client_group.promo_menu)
+        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
+    await call.message.edit_text(text, reply_markup=kb_client_group.promo_menu)
     await call.answer()
 
 

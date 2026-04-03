@@ -89,13 +89,14 @@ async def main_menu(update: Union[Message, CallbackQuery],
         is_admin = config.admin_filter.is_admin(user.id)
         if get_settings_cached().event_starts:
             kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
-            caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
+            caption_text = get_text('event_flow', 'welcome') or '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
         else:
             kb = kb_client_menu.get_start_menu(is_admin)
-            caption_text = (f'<b>Привет, {update.from_user.first_name}! '
-                           'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-                           'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-                           'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+            caption_text = get_text('start_menu', 'welcome', name=update.from_user.first_name) or (
+                f'<b>Привет, {update.from_user.first_name}! '
+                'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
+                'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
+                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
         await wait_registration.delete()
         new_menu_id = await wait_registration.answer_photo(
             caption=caption_text,
@@ -131,13 +132,14 @@ async def main_menu(update: Union[Message, CallbackQuery],
                 # Not authorized → show start menu or event menu
                 if get_settings_cached().event_starts:
                     kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
-                    caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
+                    caption_text = get_text('event_flow', 'welcome') or '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
                 else:
                     kb = kb_client_menu.get_start_menu(is_admin)
-                    caption_text = (f'<b>Привет, {user.first_name}! '
-                                   'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-                                   'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-                                   'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+                    caption_text = get_text('start_menu', 'welcome', name=user.first_name) or (
+                        f'<b>Привет, {user.first_name}! '
+                        'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
+                        'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
+                        'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=caption_text,
@@ -175,12 +177,13 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
             ...
         if get_settings_cached().event_starts:
             kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
-            caption_text = '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
+            caption_text = get_text('event_flow', 'welcome') or '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
         else:
             kb = kb_client_menu.get_start_menu(is_admin)
-            caption_text = ('<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
-                           'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
-                           'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+            caption_text = get_text('start_menu', 'welcome') or (
+                '<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+                'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
         new_menu = await bot.send_photo(
             chat_id=call.from_user.id,
             caption=caption_text,
@@ -305,10 +308,11 @@ async def wait_traff(call: CallbackQuery, state: FSMContext):
 
 async def back_to_start(call: CallbackQuery):
     await call.message.edit_caption(
-        caption=f'<b>Привет, {call.from_user.first_name}! '
-                'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-                'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>',
+        caption=get_text('start_menu', 'welcome', name=call.from_user.first_name) or (
+            f'<b>Привет, {call.from_user.first_name}! '
+            'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
+            'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
+            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>'),
         reply_markup=kb_client_menu.get_start_menu())
     await call.answer()
 
@@ -325,18 +329,19 @@ async def existing_partner(call: CallbackQuery):
 
 
 async def new_partner(call: CallbackQuery):
+    reg_fallback = (
+        '<b>Чтобы стать партнёром WINLINE PARTNERS, Вам нужно перейти на '
+        '<a href="https://partners.winline.ru">официальный сайт партнерской программы</a> '
+        'и зарегистрироваться.</b>\n\n'
+        'При регистрации укажите следующую информацию:\n'
+        '• имя и фамилию;\n'
+        '• свой email;\n'
+        '• пароль.\n\n'
+        'После заполнения заявки нажмите кнопку «Регистрация» и подтвердите '
+        'регистрацию аккаунта по email.'
+    )
     await call.message.edit_caption(
-        caption=(
-            '<b>Чтобы стать партнёром WINLINE PARTNERS, Вам нужно перейти на '
-            '<a href="https://partners.winline.ru">официальный сайт партнерской программы</a> '
-            'и зарегистрироваться.</b>\n\n'
-            'При регистрации укажите следующую информацию:\n'
-            '• имя и фамилию;\n'
-            '• свой email;\n'
-            '• пароль.\n\n'
-            'После заполнения заявки нажмите кнопку «Регистрация» и подтвердите '
-            'регистрацию аккаунта по email.'
-        ),
+        caption=get_text('registration_flow', 'instructions') or reg_fallback,
         reply_markup=kb_client_menu.get_registration_partners_menu())
     await call.answer()
 
@@ -416,7 +421,7 @@ async def pm_offers(call: CallbackQuery):
         await call.message.delete()
     except TelegramAPIError:
         ...
-    offer_text = (
+    offer_fallback = (
         '<b>📚 Информация по офферу</b>\n\n'
         '<tg-emoji emoji-id="5249137793120107984">🔥</tg-emoji> <b>Тестовая капа для оценки качества трафика:</b> 20 FTD (для новых партнеров)\n\n'
         '<b>Оплачиваемая цель:</b> новый пользователь, который внес депозит от 500 рублей единым платежом (FTD)\n'
@@ -437,6 +442,7 @@ async def pm_offers(call: CallbackQuery):
         'Запрещённые тематики: adult контент, оружие, насилие, политика, детский контент и фигурирование детей рядом с брендом, трансляция лёгкого заработка, шокирующий контент, треш контент.\n\n'
         '<tg-emoji emoji-id="5249137793120107984">🔥</tg-emoji> <b>Рекламодатель имеет право пересмотреть условия оплаты или не оплатить трафик в случае обнаружения нарушений.</b>'
     )
+    offer_text = get_text('offer_page', 'offer_text') or offer_fallback
     new_menu = await send_screen_message(
         bot, call.from_user.id, 'offer_page',
         text=offer_text,
@@ -565,7 +571,7 @@ async def pm_promo(call: CallbackQuery):
         await call.message.delete()
     except TelegramAPIError:
         ...
-    promo_text = (
+    promo_fallback = (
         '<b>🎨 Актуальные крео и лендинги</b>\n\n'
         '🌐 <b>Список актуальных лендингов</b>\n\n'
         'Здесь представлены лендинги, на которые вы можете вести трафик.\n\n'
@@ -596,8 +602,9 @@ async def pm_promo(call: CallbackQuery):
         '<b>Актуальные промо-материалы</b>\n\n'
         'Перейдите по ссылке для просмотра актуальных баннеров и креативов 👇'
     )
-    new_menu = await bot.send_message(
-        chat_id=call.from_user.id,
+    promo_text = get_text('promo_page', 'promo_text') or promo_fallback
+    new_menu = await send_screen_message(
+        bot, call.from_user.id, 'promo_page',
         text=promo_text,
         reply_markup=kb_client_group.pm_promo_menu)
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
