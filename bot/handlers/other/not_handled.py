@@ -14,6 +14,9 @@ if TYPE_CHECKING:
     from aiogram import Dispatcher
     from aiogram.fsm.context import FSMContext
 
+import hashlib
+import hmac
+import json
 import logging
 
 import aiohttp
@@ -93,13 +96,15 @@ async def _notify_admin_panel(message, album=None):
             elif message.sticker:
                 payload['sticker'] = m
 
+    body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     headers = {'Content-Type': 'application/json'}
     if secret:
-        headers['x-webhook-secret'] = secret
+        signature = hmac.new(secret.encode('utf-8'), body, hashlib.sha256).hexdigest()
+        headers['x-webhook-signature'] = signature
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.post(url, data=body, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     logging.warning(f'[admin_panel_webhook] {resp.status}: {body[:200]}')
