@@ -1115,8 +1115,7 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
         'knowledge_base': 'client_knowledge_base',
     }
     if screen_id in SYSTEM_REDIRECTS:
-        # Rewrite callback data to system callback and let aiogram re-route
-        call.data = SYSTEM_REDIRECTS[screen_id]
+        # Call the system handler directly (CallbackQuery is frozen in pydantic v2)
         handler_map = {
             'client_back_menu': back_menu,
             'client_back_to_start': back_to_start,
