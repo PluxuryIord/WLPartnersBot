@@ -611,76 +611,48 @@ async def pm_promo(call: CallbackQuery):
     await call.answer()
 
 
-def _sync_get_or_create_event_code(user_id, full_name=''):
-    """Sync helper: get existing event code or create new one."""
+def _sync_issue_event_code(user_id, label=''):
+    """Atomically issue an event code with limit protection.
+
+    Uses a MySQL advisory lock (GET_LOCK) to serialize concurrent requests
+    so the (count → check limit → insert) sequence is race-free.
+
+    Counts only ACTIVE codes toward the limit (cancelled codes free slots).
+    Guarantees one active code per user.
+
+    Returns a tuple (status, code):
+      ('existing', 'EVT-xxx')     — user already had an active code
+      ('created',  'EVT-xxx')     — new code issued
+      ('limit_reached', None)     — all slots taken
+      ('error', None)             — DB/lock failure
+    """
     _db_cfg = {
         'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
         'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
         'database': os.getenv('MYSQL_DATABASE', ''),
     }
-    conn = mysql.connector.connect(**_db_cfg)
-    cur = conn.cursor(dictionary=True)
+    conn = None
     try:
-        cur.execute('SELECT code FROM wl_event_codes WHERE user_id = %s AND status = %s LIMIT 1', (user_id, 'active'))
-        existing = cur.fetchone()
-        if existing:
-            return existing['code']
+        conn = mysql.connector.connect(**_db_cfg)
+        cur = conn.cursor(dictionary=True)
 
-        cur.execute("SELECT data FROM texts WHERE category = 'event_settings' LIMIT 1")
-        row = cur.fetchone()
-        code_limit = 0
-        if row:
-            _data = row['data']
-            _s = json_mod.loads(_data) if isinstance(_data, str) else _data
-            code_limit = int(_s.get('code_limit', 0))
-        if code_limit > 0:
-            cur.execute('SELECT COUNT(*) as cnt FROM wl_event_codes')
-            total = cur.fetchone()['cnt']
-            if total >= code_limit:
-                return None  # limit reached
+        # Acquire advisory lock (max wait 5s). Serializes concurrent issuers.
+        cur.execute("SELECT GET_LOCK('wl_event_code_issue', 5) AS ok")
+        got_lock = cur.fetchone()
+        if not got_lock or not got_lock['ok']:
+            return ('error', None)
 
-        event_code = 'EVT-' + hashlib.md5(f'{user_id}{time.time()}'.encode()).hexdigest()[:8].upper()
-        cur.execute(
-            'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
-            (event_code, full_name or str(user_id), user_id, 'active')
-        )
-        conn.commit()
-        return event_code
-    finally:
         try:
-            conn.close()
-        except Exception:
-            pass
+            # 1. Existing active code for this user?
+            cur.execute(
+                'SELECT code FROM wl_event_codes WHERE user_id = %s AND status = %s LIMIT 1',
+                (user_id, 'active'),
+            )
+            existing = cur.fetchone()
+            if existing:
+                return ('existing', existing['code'])
 
-
-async def get_or_create_event_code(user_id, full_name=''):
-    """Async wrapper — runs sync MySQL in thread pool."""
-    return await asyncio.to_thread(_sync_get_or_create_event_code, user_id, full_name)
-
-
-async def at_event(call: CallbackQuery):
-    settings = get_settings_cached()
-    if not settings.event_starts:
-        return await call.answer('Сейчас нет активных мероприятий', show_alert=True)
-
-    user_id = call.from_user.id
-
-
-    _db_cfg = {
-        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
-        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
-        'database': os.getenv('MYSQL_DATABASE', ''),
-    }
-    conn = mysql.connector.connect(**_db_cfg)
-    cur = conn.cursor(dictionary=True)
-
-    try:
-        cur.execute('SELECT code FROM wl_event_codes WHERE user_id = %s AND status = %s LIMIT 1', (user_id, 'active'))
-        existing = cur.fetchone()
-
-        if existing:
-            event_code = existing['code']
-        else:
+            # 2. Read limit from event_settings
             cur.execute("SELECT data FROM texts WHERE category = 'event_settings' LIMIT 1")
             row = cur.fetchone()
             code_limit = 0
@@ -689,57 +661,121 @@ async def at_event(call: CallbackQuery):
                 _s = json_mod.loads(_data) if isinstance(_data, str) else _data
                 code_limit = int(_s.get('code_limit', 0))
 
+            # 3. Count only ACTIVE codes — cancelled/used codes free slots back
             if code_limit > 0:
-                cur.execute('SELECT COUNT(*) as cnt FROM wl_event_codes')
+                cur.execute("SELECT COUNT(*) AS cnt FROM wl_event_codes WHERE status = 'active'")
                 total = cur.fetchone()['cnt']
                 if total >= code_limit:
-                    conn.close()
-                    return await call.answer('К сожалению, все коды уже разобраны!', show_alert=True)
+                    return ('limit_reached', None)
 
+            # 4. Generate and insert
             event_code = 'EVT-' + hashlib.md5(f'{user_id}{time.time()}'.encode()).hexdigest()[:8].upper()
             cur.execute(
                 'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
-                (event_code, call.from_user.full_name, user_id, 'active')
+                (event_code, label or str(user_id), user_id, 'active'),
             )
             conn.commit()
-
-        # Download QR card from panel server
-        qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as _sess:
-                async with _sess.get(qr_card_url) as _resp:
-                    if _resp.status == 200:
-                        _card_data = await _resp.read()
-                        photo = BufferedInputFile(_card_data, filename=f'qr_{user_id}.png')
-                    else:
-                        raise Exception(f'HTTP {_resp.status}')
-        except Exception as _e:
-            logger.warning(f'[QR-CARD at_event] Fallback: {_e}')
-            qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
-            qr.add_data(event_code)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color='black', back_color='white')
-            buf = BytesIO()
-            img.save(buf, format='PNG')
-            buf.seek(0)
-            photo = BufferedInputFile(buf.read(), filename=f'qr_{user_id}.png')
+            return ('created', event_code)
+        finally:
+            try:
+                cur.execute("SELECT RELEASE_LOCK('wl_event_code_issue')")
+                cur.fetchone()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f'[event_code] issue error: {e}')
+        return ('error', None)
     finally:
         try:
-            conn.close()
+            if conn:
+                conn.close()
         except Exception:
             pass
+
+
+async def issue_event_code(user_id, label=''):
+    """Async wrapper for atomic event code issuing."""
+    return await asyncio.to_thread(_sync_issue_event_code, user_id, label)
+
+
+# Backward-compat shim for existing callers that expect `code | None`
+async def get_or_create_event_code(user_id, full_name=''):
+    status, code = await issue_event_code(user_id, full_name)
+    return code  # None if limit reached / error
+
+
+async def at_event(call: CallbackQuery):
+    settings = get_settings_cached()
+    if not settings.event_starts:
+        return await call.answer(
+            get_text('event_flow', 'no_event') or 'Сейчас нет активных мероприятий',
+            show_alert=True,
+        )
+
+    user_id = call.from_user.id
+
+    # Atomic: issue or get existing code (race-free, counts only active)
+    status, event_code = await issue_event_code(user_id, call.from_user.full_name)
+
+    # Limit reached — edit the message to a dedicated "sold out" screen
+    if status == 'limit_reached':
+        try:
+            await call.message.delete()
+        except TelegramAPIError:
+            ...
+        sold_out_text = get_text('event_flow', 'limit_reached') or (
+            '<b>😔 К сожалению, все призы уже разобраны</b>\n\n'
+            'Спасибо за интерес к нашему мероприятию! '
+            'Следите за анонсами — скоро будут новые акции.'
+        )
+        new_menu = await bot.send_message(
+            chat_id=user_id,
+            text=sold_out_text,
+            reply_markup=kb_client_menu.back_menu,
+        )
+        DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+        return await call.answer()
+
+    if status == 'error' or not event_code:
+        return await call.answer(
+            '⚠️ Временная ошибка, попробуйте ещё раз через пару секунд',
+            show_alert=True,
+        )
+
+    # Download QR card from panel server (with local fallback)
+    qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as _sess:
+            async with _sess.get(qr_card_url) as _resp:
+                if _resp.status == 200:
+                    _card_data = await _resp.read()
+                    photo = BufferedInputFile(_card_data, filename=f'qr_{user_id}.png')
+                else:
+                    raise Exception(f'HTTP {_resp.status}')
+    except Exception as _e:
+        logger.warning(f'[QR-CARD at_event] Fallback: {_e}')
+        qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
+        qr.add_data(event_code)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color='black', back_color='white')
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        photo = BufferedInputFile(buf.read(), filename=f'qr_{user_id}.png')
 
     try:
         await call.message.delete()
     except TelegramAPIError:
         ...
+    qr_caption = get_text('event_flow', 'qr_caption') or '<b>Вот ваш QR для получения подарка!</b>'
     new_menu = await bot.send_photo(
         chat_id=user_id,
         photo=photo,
-        caption=f'<b>Вот ваш QR для получения подарка!</b>\n\nКод: <code>{event_code}</code>',
-        reply_markup=kb_client_menu.back_menu
+        caption=f'{qr_caption}\n\nКод: <code>{event_code}</code>',
+        reply_markup=kb_client_menu.back_menu,
     )
     DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+    await call.answer()
 
 async def logout(call: CallbackQuery):
     """Logout: delete auth data and show start menu"""
@@ -790,71 +826,35 @@ def _get_qr_caption() -> str:
     return ''
 
 async def _generate_event_qr(user_id: int) -> str:
-    """Generate QR for event using wl_event_codes, return path."""
+    """Generate QR for event using wl_event_codes, return path or None if limit reached."""
+    user_data = DB.User.select(user_id)
+    label = user_data.full_name if user_data else str(user_id)
 
-    _db_cfg = {
-        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
-        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
-        'database': os.getenv('MYSQL_DATABASE', ''),
-    }
-    conn = mysql.connector.connect(**_db_cfg)
-    cur = conn.cursor(dictionary=True)
+    status, event_code = await issue_event_code(user_id, label)
+    if status in ('limit_reached', 'error') or not event_code:
+        return None
 
-    try:
-        # Check existing active code
-        cur.execute('SELECT code FROM wl_event_codes WHERE user_id = %s AND status = %s LIMIT 1', (user_id, 'active'))
-        existing = cur.fetchone()
-
-        if existing:
-            event_code = existing['code']
-        else:
-            # Check code limit
-            cur.execute("SELECT data FROM texts WHERE category = 'event_settings' LIMIT 1")
-            row = cur.fetchone()
-            code_limit = 0
-            if row:
-                _data = row['data']
-                _s = json_mod.loads(_data) if isinstance(_data, str) else _data
-                code_limit = int(_s.get('code_limit', 0))
-
-            if code_limit > 0:
-                cur.execute('SELECT COUNT(*) as cnt FROM wl_event_codes')
-                total = cur.fetchone()['cnt']
-                if total >= code_limit:
-                    conn.close()
-                    return None  # limit reached
-
-            event_code = 'EVT-' + hashlib.md5(f'{user_id}{time.time()}'.encode()).hexdigest()[:8].upper()
-            user_data = DB.User.select(user_id)
-            label = user_data.full_name if user_data else str(user_id)
-            cur.execute(
-                'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
-                (event_code, label, user_id, 'active')
-            )
-            conn.commit()
-
-        # Generate QR image and save to file
-        qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
-        qr.add_data(event_code)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color='black', back_color='white')
-        qr_path = f"files/{user_id}_evt.png"
-        img.save(qr_path)
-        return qr_path
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
+    qr.add_data(event_code)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white')
+    qr_path = f"files/{user_id}_evt.png"
+    img.save(qr_path)
+    return qr_path
 
 async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     """Send QR photo with code in caption."""
     qr_path = await _generate_event_qr(user_id)
     if qr_path is None:
-        # Limit reached
+        # Limit reached or error
+        sold_out_text = get_text('event_flow', 'limit_reached') or (
+            '<b>😔 К сожалению, все призы уже разобраны</b>\n\n'
+            'Спасибо за интерес к нашему мероприятию! '
+            'Следите за анонсами — скоро будут новые акции.'
+        )
         new_menu = await bot.send_message(
             chat_id=user_id,
-            text='К сожалению, все коды уже разобраны!',
+            text=sold_out_text,
             reply_markup=kb_client_menu.back_menu,
         )
         DB.User.update(mark=user_id, menu_id=new_menu.message_id)
