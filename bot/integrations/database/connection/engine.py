@@ -16,7 +16,12 @@ sql_debug = env.bool("SQL_DEBUG")
 
 
 def build_engine(engine_url: str) -> Engine:
-    eng = create_engine(url=engine_url, echo=sql_debug, pool_pre_ping=False)
+    eng = create_engine(
+        url=engine_url,
+        echo=sql_debug,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
     return eng
 
 
