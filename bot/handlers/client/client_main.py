@@ -1112,6 +1112,7 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
         'socials_page': 'client_socials',
         'event_flow': 'client_at_event',
         'logout_screen': 'client_logout',
+        'knowledge_base': 'client_knowledge_base',
     }
     if screen_id in SYSTEM_REDIRECTS:
         # Rewrite callback data to system callback and let aiogram re-route
@@ -1126,6 +1127,7 @@ async def dynamic_screen_handler(call: CallbackQuery, state: FSMContext):
             'client_socials': pm_socials,
             'client_at_event': at_event,
             'client_logout': logout,
+            'client_knowledge_base': pm_knowledge_base,
         }
         handler = handler_map.get(SYSTEM_REDIRECTS[screen_id])
         if handler:
