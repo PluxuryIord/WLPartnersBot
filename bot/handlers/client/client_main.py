@@ -466,12 +466,14 @@ async def pm_offers(call: CallbackQuery):
         '<tg-emoji emoji-id="5249137793120107984">🔥</tg-emoji> <b>Рекламодатель имеет право пересмотреть условия оплаты или не оплатить трафик в случае обнаружения нарушений.</b>'
     )
     offer_text = get_text('offer_page', 'offer_text') or offer_fallback
+    from bot.utils.dynamic_kb import get_screen_kb
+    offer_kb = get_screen_kb('offer_page') or kb_client_group.create_inline([
+        ['🔙 Меню', 'call', 'client_back_menu'],
+    ], 1)
     new_menu = await send_screen_message(
         bot, call.from_user.id, 'offer_page',
         text=offer_text,
-        reply_markup=kb_client_group.create_inline([
-            ['🔙 Меню', 'call', 'client_back_menu'],
-        ], 1))
+        reply_markup=offer_kb)
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     await call.answer()
 
@@ -575,7 +577,8 @@ async def pm_socials(call: CallbackQuery):
         await call.message.delete()
     except TelegramAPIError:
         ...
-    socials_menu = kb_client_group.create_inline([
+    from bot.utils.dynamic_kb import get_screen_kb
+    socials_menu = get_screen_kb('socials_page') or kb_client_group.create_inline([
         ['@WinlinePartners', 'url', 'https://t.me/WinlinePartners'],
         ['🔙 Меню', 'call', 'client_back_menu'],
     ], 1)
@@ -626,10 +629,12 @@ async def pm_promo(call: CallbackQuery):
         'Перейдите по ссылке для просмотра актуальных баннеров и креативов 👇'
     )
     promo_text = get_text('promo_page', 'promo_text') or promo_fallback
+    from bot.utils.dynamic_kb import get_screen_kb
+    promo_kb = get_screen_kb('promo_page') or kb_client_group.pm_promo_menu
     new_menu = await send_screen_message(
         bot, call.from_user.id, 'promo_page',
         text=promo_text,
-        reply_markup=kb_client_group.pm_promo_menu)
+        reply_markup=promo_kb)
     DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
     await call.answer()
 
@@ -751,10 +756,12 @@ async def at_event(call: CallbackQuery):
             'Спасибо за интерес к нашему мероприятию! '
             'Следите за анонсами — скоро будут новые акции.'
         )
+        from bot.utils.dynamic_kb import get_screen_kb as _gsk
+        event_kb = _gsk('event_flow') or kb_client_menu.back_menu
         new_menu = await bot.send_message(
             chat_id=user_id,
             text=sold_out_text,
-            reply_markup=kb_client_menu.back_menu,
+            reply_markup=event_kb,
         )
         DB.User.update(mark=user_id, menu_id=new_menu.message_id)
         return await call.answer()
@@ -791,11 +798,13 @@ async def at_event(call: CallbackQuery):
     except TelegramAPIError:
         ...
     qr_caption = get_text('event_flow', 'qr_caption') or '<b>Вот ваш QR для получения подарка!</b>'
+    from bot.utils.dynamic_kb import get_screen_kb as _gsk2
+    event_kb = _gsk2('event_flow') or kb_client_menu.back_menu
     new_menu = await bot.send_photo(
         chat_id=user_id,
         photo=photo,
         caption=f'{qr_caption}\n\nКод: <code>{event_code}</code>',
-        reply_markup=kb_client_menu.back_menu,
+        reply_markup=event_kb,
     )
     DB.User.update(mark=user_id, menu_id=new_menu.message_id)
     await call.answer()
@@ -875,10 +884,12 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
             'Спасибо за интерес к нашему мероприятию! '
             'Следите за анонсами — скоро будут новые акции.'
         )
+        from bot.utils.dynamic_kb import get_screen_kb as _gsk
+        event_kb = _gsk('event_flow') or kb_client_menu.back_menu
         new_menu = await bot.send_message(
             chat_id=user_id,
             text=sold_out_text,
-            reply_markup=kb_client_menu.back_menu,
+            reply_markup=event_kb,
         )
         DB.User.update(mark=user_id, menu_id=new_menu.message_id)
         return new_menu
