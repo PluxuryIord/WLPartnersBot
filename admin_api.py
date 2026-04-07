@@ -327,7 +327,7 @@ query checkEmail($email: String!) {
     }
 }
 '''
-        variables = {"email": email}
+    variables = {"email": email}
 
     try:
         async with aiohttp.ClientSession() as session:

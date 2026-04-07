@@ -118,6 +118,7 @@ async def _notify_admin_panel(message, album=None):
                 'is_anonymous': bool(getattr(p, 'is_anonymous', True)),
                 'allows_multiple_answers': bool(getattr(p, 'allows_multiple_answers', False)),
                 'type': getattr(p, 'type', 'regular'),
+
             }
 
     body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
