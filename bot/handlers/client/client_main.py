@@ -7,6 +7,7 @@ Site Company: buy-bot.ru
 from __future__ import annotations
 import os
 import hashlib
+import hmac
 import qrcode
 import aiohttp
 import time
@@ -1227,12 +1228,17 @@ async def poll_vote_handler(call: CallbackQuery):
         return await call.answer("Ошибка")
     _, poll_id, option_index = parts
     try:
+        base_url = config.admin_panel_webhook.rstrip('/').rsplit('/api/', 1)[0] if config.admin_panel_webhook else "https://panel.wl-fdms.tw1.ru"
+        url = f"{base_url}/api/broadcasts/poll-vote"
+        payload = {"poll_id": int(poll_id), "user_id": call.from_user.id, "option_index": int(option_index)}
+        body_bytes = json_mod.dumps(payload, separators=(',', ':')).encode('utf-8')
+        sig = hmac.new(config.admin_webhook_secret.encode(), body_bytes, hashlib.sha256).hexdigest() if config.admin_webhook_secret else ""
+        headers = {"Content-Type": "application/json"}
+        if sig:
+            headers["x-webhook-signature"] = sig
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                "https://panel.wl-fdms.tw1.ru/api/broadcasts/poll-vote",
-                json={"poll_id": int(poll_id), "user_id": call.from_user.id, "option_index": int(option_index)}
-            ) as resp:
+            async with session.post(url, data=body_bytes, headers=headers) as resp:
                 if resp.status != 200:
                     logger.error(f"[poll_vote] API returned {resp.status}")
                     return await call.answer("Ошибка", show_alert=False)
