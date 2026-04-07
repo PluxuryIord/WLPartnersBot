@@ -45,7 +45,22 @@ def _extract_media(msg):
     elif msg.audio:
         return {'file_id': msg.audio.file_id, 'mime_type': msg.audio.mime_type or 'audio/mpeg'}
     elif msg.sticker:
-        return {'file_id': msg.sticker.file_id, 'mime_type': 'image/webp'}
+        s = msg.sticker
+        info = {
+            'file_id': s.file_id,
+            'file_unique_id': s.file_unique_id,
+            'mime_type': 'image/webp',
+            'is_animated': bool(s.is_animated),
+            'is_video': bool(s.is_video),
+        }
+        if s.is_video:
+            info['mime_type'] = 'video/webm'
+        if s.thumbnail:
+            info['thumbnail'] = {
+                'file_id': s.thumbnail.file_id,
+                'file_unique_id': s.thumbnail.file_unique_id,
+            }
+        return info
     return None
 
 
