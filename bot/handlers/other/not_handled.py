@@ -95,6 +95,15 @@ async def _notify_admin_panel(message, album=None):
                 payload['audio'] = m
             elif message.sticker:
                 payload['sticker'] = m
+        elif getattr(message, 'poll', None):
+            p = message.poll
+            payload['poll'] = {
+                'question': p.question or '',
+                'options': [o.text for o in (p.options or [])],
+                'is_anonymous': bool(getattr(p, 'is_anonymous', True)),
+                'allows_multiple_answers': bool(getattr(p, 'allows_multiple_answers', False)),
+                'type': getattr(p, 'type', 'regular'),
+            }
 
     body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     headers = {'Content-Type': 'application/json'}

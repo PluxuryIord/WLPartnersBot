@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from aiogram.utils.markdown import hlink
 
 import bot.keyboards.admin.kb_admin_topic
-from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize
+from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize, new_answers
 from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth
 from bot.utils.qr_code import generate_qr_on_template
 
@@ -1023,7 +1023,40 @@ async def _anketa_next_or_finish(user_id: int, state: FSMContext):
     index = data['anketa_index'] + 1
 
     if index >= len(questions):
-        # All done → clear state, give QR
+        # All done → save answers to Google Sheets, clear state, give QR
+        try:
+            # Collect all answers for this user from DB
+            answers = DB.EventAnswer.select(
+                where=(DB.EventAnswer.user_id == user_id),
+                all_scalars=True,
+            )
+            # Map question_id → answer_text
+            answer_map = {}
+            for a in (answers or []):
+                answer_map[a.question_id] = a.answer_text
+
+            # Build Q&A pairs in order
+            qa_pairs = []
+            for q in questions:
+                qa_pairs.append({
+                    'question': q['text'],
+                    'answer': answer_map.get(q['id'], ''),
+                })
+
+            # Get user info
+            user = DB.User.select(user_id)
+            full_name = user.full_name if user else ''
+            username = user.username if user else ''
+
+            await new_answers(
+                user_id=str(user_id),
+                full_name=full_name,
+                username=username,
+                questions_answers=qa_pairs,
+            )
+        except Exception as e:
+            print(f'[anketa] Ошибка отправки в Google Sheets: {e}')
+
         await state.clear()
         await _send_event_qr(user_id, is_partner=False)
         return
