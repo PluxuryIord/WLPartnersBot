@@ -6,15 +6,21 @@ Site Company: buy-bot.ru
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from environs import Env
 
 env = Env()
 env.read_env()
 
+# Optional SOCKS5/HTTP proxy for Telegram API (bypass regional blocks)
+_proxy_url = env.str("TG_PROXY_URL", "")
+_session = AiohttpSession(proxy=_proxy_url) if _proxy_url else None
+
 # Bot Object
 bot = Bot(
     token=env.str("TG_TOKEN"),
-    default=DefaultBotProperties(parse_mode='HTML', link_preview_is_disabled=True)
+    default=DefaultBotProperties(parse_mode='HTML', link_preview_is_disabled=True),
+    session=_session,
 )
 # Bot Dispatcher
 dp = Dispatcher()

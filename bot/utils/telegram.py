@@ -9,6 +9,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
+from environs import Env as _ProxyEnv
+_proxy_env = _ProxyEnv(); _proxy_env.read_env()
+_TG_PROXY_URL = _proxy_env.str("TG_PROXY_URL", "")
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
@@ -390,7 +394,7 @@ def unpack_media_group(messages: List[Message], special_format: Literal['no_capt
 
 class TopicManager:
     def __init__(self):
-        self.bots = itertools.cycle([Bot(token=alert_bot, default=DefaultBotProperties(parse_mode='HTML', link_preview_is_disabled=True)) for alert_bot in config.alert_bots])
+        self.bots = itertools.cycle([Bot(token=alert_bot, default=DefaultBotProperties(parse_mode='HTML', link_preview_is_disabled=True), session=AiohttpSession(proxy=_TG_PROXY_URL) if _TG_PROXY_URL else None) for alert_bot in config.alert_bots])
         self.bot_group = DB.Settings.select().bot_group
         self.alert = DB.Settings.select().alert_thread
 
