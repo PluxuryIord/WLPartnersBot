@@ -64,7 +64,7 @@ input_data = {
     4: ['Тип трафика', 'graph'],
 }
 
-IAP_API_URL = 'https://iap-demo.admon.pro/api/graphql'
+IAP_API_URL = os.getenv('IAP_API_URL', 'https://p.winline.ru/api/graphql')
 IAP_TOKEN = os.getenv('IAP_ADMIN_TOKEN', '')
 
 
