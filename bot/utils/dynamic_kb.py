@@ -1,4 +1,8 @@
 """Build inline keyboards dynamically from bot_scenarios in DB."""
+import logging
+
+logger = logging.getLogger('wl_bot')
+
 from bot.integrations import DB
 from bot.utils.telegram import create_inline
 
@@ -26,7 +30,7 @@ def reload():
 
 def get_screen_kb(screen_id, extra_buttons=None, cols=1):
     """Build inline keyboard for a screen from scenarios data.
-    
+
     extra_buttons: list of [label, type, data] to append (e.g. admin button)
     Returns InlineKeyboardMarkup or None if screen not found.
     """
@@ -38,7 +42,7 @@ def get_screen_kb(screen_id, extra_buttons=None, cols=1):
 
     buttons_def = screen['buttons']
     order = buttons_def.get('_order', [])
-    
+
     buttons = []
     for key in order:
         btn = buttons_def.get(key)
@@ -74,7 +78,7 @@ def get_screen_kb_filtered(screen_id, extra_buttons=None, skip_actions=None, col
     buttons_def = screen['buttons']
     order = buttons_def.get('_order', [])
     skip = skip_actions or []
-    
+
     buttons = []
     for key in order:
         btn = buttons_def.get(key)
@@ -82,11 +86,11 @@ def get_screen_kb_filtered(screen_id, extra_buttons=None, skip_actions=None, col
             continue
         action = btn.get('action', '')
         label = btn.get('label', '???')
-        
+
         # Skip if action matches any skip pattern
         if any(s in action for s in skip):
             continue
-        
+
         if action.startswith('url:'):
             buttons.append([label, 'url', action[4:]])
         elif action.startswith('callback:'):
@@ -100,3 +104,54 @@ def get_screen_kb_filtered(screen_id, extra_buttons=None, skip_actions=None, col
     if not buttons:
         return None
     return create_inline(buttons, cols)
+
+
+# ─── Anketa flow helpers ─────────────────────────────────────────────────────
+
+def get_screen(screen_id):
+    """Get raw screen data dict."""
+    data = _cache.get('data') or _load()
+    return data.get('screens', {}).get(screen_id)
+
+
+def get_anketa_screens():
+    """Get all screens with scenario=5 (anketa flow screens)."""
+    data = _cache.get('data') or _load()
+    screens = data.get('screens', {})
+    return {sid: s for sid, s in screens.items() if s.get('scenario') == 5}
+
+
+def find_first_anketa_screen():
+    """Find the first anketa screen — linked from event_anketa button."""
+    data = _cache.get('data') or _load()
+    screens = data.get('screens', {})
+    event_anketa = screens.get('event_anketa')
+    if not event_anketa:
+        return None
+    # Find button that points to a scenario:5 screen
+    order = event_anketa.get('buttons', {}).get('_order', [])
+    for key in order:
+        btn = event_anketa.get('buttons', {}).get(key)
+        if btn and btn.get('targetScreen'):
+            target = screens.get(btn['targetScreen'])
+            if target and target.get('scenario') == 5:
+                return btn['targetScreen']
+    # Fallback: return first scenario:5 screen found
+    for sid, s in screens.items():
+        if s.get('scenario') == 5:
+            return sid
+    return None
+
+
+def get_screen_text(screen_id):
+    """Get the first message text from a screen."""
+    data = _cache.get('data') or _load()
+    screen = data.get('screens', {}).get(screen_id)
+    if not screen:
+        return ''
+    messages = screen.get('messages', {})
+    for key in messages:
+        text = messages[key].get('text', '')
+        if text:
+            return text
+    return screen.get('title', '')

@@ -1039,18 +1039,121 @@ async def start_event(message: Message, state: FSMContext):
 
 
 async def _start_event_anketa(message: Message, user_id: int, state: FSMContext):
-    """Load questions from DB and start the anketa flow."""
-    from sqlalchemy import asc
+    """Start anketa using scenario flow (scenario:5 screens)."""
+    from bot.utils.dynamic_kb import find_first_anketa_screen, reload as reload_scenarios
+    reload_scenarios()  # fresh data
+
+    first_screen_id = find_first_anketa_screen()
+    if not first_screen_id:
+        # No anketa screens configured → fallback to old DB questions
+        await _start_event_anketa_legacy(message, user_id, state)
+        return
+
+    await state.set_state(FsmEventAnketa.answering)
+    await state.update_data(
+        anketa_answers={},  # answerKey → answer_text
+        anketa_screen_path=[],  # list of screen_ids visited (for sheets order)
+    )
+    await _send_anketa_screen(user_id, first_screen_id, state)
+
+
+async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
+    """Send an anketa flow screen to the user."""
+    from bot.utils.dynamic_kb import get_screen, get_screen_kb, get_screen_text
+    from bot.utils.scenario_texts import send_screen_message
+
+    screen = get_screen(screen_id)
+    if not screen or screen.get('scenario') != 5:
+        # Not an anketa screen → finish
+        await _anketa_finish(user_id, state)
+        return
+
+    text = get_screen_text(screen_id)
+    if not text:
+        text = f'<b>{screen.get("title", "Вопрос")}</b>'
+
+    step_type = screen.get('stepType', 'choice')
+    kb = None
+
+    if step_type == 'choice':
+        # Use screen buttons (they have targetScreen for flow navigation)
+        # Build keyboard with anketa_flow: prefix so we can catch them
+        buttons_def = screen.get('buttons', {})
+        order = buttons_def.get('_order', [])
+        buttons = []
+        for key in order:
+            btn = buttons_def.get(key)
+            if not btn:
+                continue
+            label = btn.get('label', '???')
+            action = btn.get('action', '')
+            target = btn.get('targetScreen', '')
+            # Use anketa_flow:screenId:btnKey:targetScreen callback
+            buttons.append([label, 'call', f'anketa_flow:{screen_id}:{key}:{target}'])
+        if buttons:
+            from bot.utils.telegram import create_inline
+            kb = create_inline(buttons, 1)
+
+    # Send the message
+    menu = await send_screen_message(bot, user_id, screen_id, text, reply_markup=kb)
+    DB.User.update(mark=user_id, menu_id=menu.message_id)
+
+    # Save current screen in state
+    await state.update_data(
+        anketa_current_screen=screen_id,
+        anketa_menu_message=menu,
+    )
+
+
+async def _anketa_finish(user_id: int, state: FSMContext):
+    """Finish anketa: save answers to Google Sheets and send QR."""
+    data = await state.get_data()
+    answers = data.get('anketa_answers', {})
+    screen_path = data.get('anketa_screen_path', [])
+
+    try:
+        from bot.utils.dynamic_kb import get_screen
+        # Build Q&A pairs from answers dict, ordered by screen_path
+        qa_pairs = []
+        seen_keys = set()
+        for sid in screen_path:
+            scr = get_screen(sid)
+            if scr and scr.get('answerKey') and scr['answerKey'] not in seen_keys:
+                key = scr['answerKey']
+                seen_keys.add(key)
+                # Use screen title as question name for Google Sheets
+                qa_pairs.append({
+                    'question': scr.get('title', key),
+                    'answer': answers.get(key, ''),
+                })
+
+        if qa_pairs:
+            user = DB.User.select(user_id)
+            full_name = user.full_name if user else ''
+            username = user.username if user else ''
+            await new_answers(
+                user_id=str(user_id),
+                full_name=full_name,
+                username=username,
+                questions_answers=qa_pairs,
+            )
+    except Exception as e:
+        logger.error(f'[anketa-flow] Ошибка отправки в Google Sheets: {e}')
+
+    await state.clear()
+    await _send_event_qr(user_id, is_partner=False)
+
+
+async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMContext):
+    """Legacy: load questions from DB (flat list) when no scenario:5 screens exist."""
     questions = DB.EventQuestion.select(
         where=(DB.EventQuestion.is_active == True),
         all_scalars=True,
     )
     if not questions:
-        # No questions configured → give QR immediately
         await _send_event_qr(user_id, is_partner=False)
         return
 
-    # Sort by order
     questions = sorted(questions, key=lambda q: q.order)
     questions_data = [
         {'id': q.id, 'text': q.question_text, 'type': q.question_type, 'options': q.options}
@@ -1061,12 +1164,13 @@ async def _start_event_anketa(message: Message, user_id: int, state: FSMContext)
     await state.update_data(
         anketa_questions=questions_data,
         anketa_index=0,
+        anketa_legacy=True,
     )
-    await _send_anketa_question(user_id, questions_data[0], state)
+    await _send_anketa_question_legacy(user_id, questions_data[0], state)
 
 
-async def _send_anketa_question(user_id: int, question: dict, state: FSMContext):
-    """Send a single anketa question to the user."""
+async def _send_anketa_question_legacy(user_id: int, question: dict, state: FSMContext):
+    """Legacy: send a flat anketa question."""
     text = f'<b>{question["text"]}</b>'
     if question['type'] == 'choice' and question.get('options'):
         buttons = [
@@ -1082,26 +1186,22 @@ async def _send_anketa_question(user_id: int, question: dict, state: FSMContext)
     await state.update_data(anketa_menu_message=menu)
 
 
-async def _anketa_next_or_finish(user_id: int, state: FSMContext):
-    """Move to next question or finish with QR."""
+async def _anketa_next_or_finish_legacy(user_id: int, state: FSMContext):
+    """Legacy: move to next question or finish."""
     data = await state.get_data()
     questions = data['anketa_questions']
     index = data['anketa_index'] + 1
 
     if index >= len(questions):
-        # All done → save answers to Google Sheets, clear state, give QR
         try:
-            # Collect all answers for this user from DB
             answers = DB.EventAnswer.select(
                 where=(DB.EventAnswer.user_id == user_id),
                 all_scalars=True,
             )
-            # Map question_id → answer_text
             answer_map = {}
             for a in (answers or []):
                 answer_map[a.question_id] = a.answer_text
 
-            # Build Q&A pairs in order
             qa_pairs = []
             for q in questions:
                 qa_pairs.append({
@@ -1109,7 +1209,6 @@ async def _anketa_next_or_finish(user_id: int, state: FSMContext):
                     'answer': answer_map.get(q['id'], ''),
                 })
 
-            # Get user info
             user = DB.User.select(user_id)
             full_name = user.full_name if user else ''
             username = user.username if user else ''
@@ -1128,25 +1227,54 @@ async def _anketa_next_or_finish(user_id: int, state: FSMContext):
         return
 
     await state.update_data(anketa_index=index)
-    await _send_anketa_question(user_id, questions[index], state)
+    await _send_anketa_question_legacy(user_id, questions[index], state)
 
 
 async def process_anketa_text(message: Message, state: FSMContext):
-    """Handle text answer in event anketa."""
+    """Handle text answer in event anketa (both flow and legacy)."""
     await message.delete()
     data = await state.get_data()
-    questions = data['anketa_questions']
-    index = data['anketa_index']
-    question = questions[index]
 
-    # Save answer
-    DB.EventAnswer.add(
-        user_id=message.from_user.id,
-        question_id=question['id'],
-        answer_text=message.text,
-    )
+    # Legacy mode
+    if data.get('anketa_legacy'):
+        questions = data['anketa_questions']
+        index = data['anketa_index']
+        question = questions[index]
+        DB.EventAnswer.add(
+            user_id=message.from_user.id,
+            question_id=question['id'],
+            answer_text=message.text,
+        )
+        menu_msg = data.get('anketa_menu_message')
+        if menu_msg:
+            try:
+                await menu_msg.delete()
+            except TelegramAPIError:
+                ...
+        await _anketa_next_or_finish_legacy(message.from_user.id, state)
+        return
 
-    # Delete previous question message
+    # Flow mode: text_input screen
+    from bot.utils.dynamic_kb import get_screen
+    current_screen_id = data.get('anketa_current_screen')
+    if not current_screen_id:
+        await _anketa_finish(message.from_user.id, state)
+        return
+
+    screen = get_screen(current_screen_id)
+    answer_key = screen.get('answerKey', '') if screen else ''
+
+    # Save answer in state
+    answers = data.get('anketa_answers', {})
+    if answer_key:
+        answers[answer_key] = message.text
+    screen_path = data.get('anketa_screen_path', [])
+    if current_screen_id not in screen_path:
+        screen_path.append(current_screen_id)
+
+    await state.update_data(anketa_answers=answers, anketa_screen_path=screen_path)
+
+    # Delete previous message
     menu_msg = data.get('anketa_menu_message')
     if menu_msg:
         try:
@@ -1154,12 +1282,23 @@ async def process_anketa_text(message: Message, state: FSMContext):
         except TelegramAPIError:
             ...
 
-    await _anketa_next_or_finish(message.from_user.id, state)
+    # Navigate to nextScreen
+    next_screen = screen.get('nextScreen', '') if screen else ''
+    if next_screen:
+        await _send_anketa_screen(message.from_user.id, next_screen, state)
+    else:
+        await _anketa_finish(message.from_user.id, state)
 
 
 async def process_anketa_choice(call: CallbackQuery, state: FSMContext):
-    """Handle choice button press in event anketa."""
+    """Handle choice button press in event anketa (legacy mode)."""
     data = await state.get_data()
+
+    # Legacy mode only — flow mode uses process_anketa_flow_choice
+    if not data.get('anketa_legacy'):
+        await call.answer()
+        return
+
     questions = data['anketa_questions']
     index = data['anketa_index']
     question = questions[index]
@@ -1167,7 +1306,6 @@ async def process_anketa_choice(call: CallbackQuery, state: FSMContext):
     choice_index = int(call.data.split(':')[1])
     answer_text = question['options'][choice_index]
 
-    # Save answer
     DB.EventAnswer.add(
         user_id=call.from_user.id,
         question_id=question['id'],
@@ -1180,7 +1318,49 @@ async def process_anketa_choice(call: CallbackQuery, state: FSMContext):
         ...
 
     await call.answer()
-    await _anketa_next_or_finish(call.from_user.id, state)
+    await _anketa_next_or_finish_legacy(call.from_user.id, state)
+
+
+async def process_anketa_flow_choice(call: CallbackQuery, state: FSMContext):
+    """Handle choice button press in anketa flow (scenario:5 screens)."""
+    # callback format: anketa_flow:{screen_id}:{btn_key}:{target_screen}
+    parts = call.data.split(':')
+    if len(parts) < 4:
+        await call.answer()
+        return
+
+    screen_id = parts[1]
+    btn_key = parts[2]
+    target_screen = parts[3] if parts[3] else ''
+
+    from bot.utils.dynamic_kb import get_screen
+    screen = get_screen(screen_id)
+    answer_key = screen.get('answerKey', '') if screen else ''
+
+    # Get the button label as answer
+    btn = screen.get('buttons', {}).get(btn_key, {}) if screen else {}
+    answer_text = btn.get('label', '')
+
+    data = await state.get_data()
+    answers = data.get('anketa_answers', {})
+    if answer_key:
+        answers[answer_key] = answer_text
+    screen_path = data.get('anketa_screen_path', [])
+    if screen_id not in screen_path:
+        screen_path.append(screen_id)
+
+    await state.update_data(anketa_answers=answers, anketa_screen_path=screen_path)
+
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    await call.answer()
+
+    if target_screen:
+        await _send_anketa_screen(call.from_user.id, target_screen, state)
+    else:
+        await _anketa_finish(call.from_user.id, state)
 
 
 async def start_event_anketa_callback(call: CallbackQuery, state: FSMContext):
@@ -1355,6 +1535,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
+    dp.callback_query.register(process_anketa_flow_choice, F.data.startswith('anketa_flow:'), FsmEventAnketa.answering)
     dp.callback_query.register(process_anketa_choice, F.data.startswith('anketa_choice:'), FsmEventAnketa.answering)
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
     dp.message.register(wait_phone, FsmRegistration.wait_phone)
