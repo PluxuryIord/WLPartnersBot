@@ -839,7 +839,7 @@ async def at_event(call: CallbackQuery):
         )
 
     # Download QR card from panel server (with local fallback)
-    qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
+    qr_card_url = f'https://winlinepartners.ru/api/events/codes/{event_code}/qr-card'
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as _sess:
             async with _sess.get(qr_card_url) as _resp:
@@ -966,7 +966,7 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     reply_markup = kb_client_menu.back_menu if is_partner else kb_client_menu.event_qr_new_menu
     
     # Download QR card from panel server
-    qr_card_url = f'https://panel.wl-fdms.tw1.ru/api/events/codes/{event_code}/qr-card'
+    qr_card_url = f'https://winlinepartners.ru/api/events/codes/{event_code}/qr-card'
     qr_path = f"files/{user_id}_card.png"
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
@@ -1473,7 +1473,7 @@ async def poll_vote_handler(call: CallbackQuery):
         return await call.answer("Ошибка")
     _, poll_id, option_index = parts
     try:
-        base_url = config.admin_panel_webhook.rstrip('/').rsplit('/api/', 1)[0] if config.admin_panel_webhook else "https://panel.wl-fdms.tw1.ru"
+        base_url = config.admin_panel_webhook.rstrip('/').rsplit('/api/', 1)[0] if config.admin_panel_webhook else "https://winlinepartners.ru"
         url = f"{base_url}/api/broadcasts/poll-vote"
         payload = {"poll_id": int(poll_id), "user_id": call.from_user.id, "option_index": int(option_index)}
         body_bytes = json_mod.dumps(payload, separators=(',', ':')).encode('utf-8')
