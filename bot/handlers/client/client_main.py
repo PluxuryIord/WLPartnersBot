@@ -64,6 +64,42 @@ input_data = {
     4: ['Тип трафика', 'graph'],
 }
 
+IAP_API_URL = 'https://iap-demo.admon.pro/api/graphql'
+IAP_TOKEN = os.getenv('IAP_ADMIN_TOKEN', '')
+
+
+async def check_email_in_iap(email: str) -> dict:
+    """Check if email exists in IAP platform.
+    Returns dict: {'found': bool, 'status': int|None, 'id': int|None, 'name': str|None}
+    """
+    if not IAP_TOKEN:
+        logger.warning('[IAP] IAP_ADMIN_TOKEN not set, skipping check')
+        return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback: allow
+
+    query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { id email status firstName lastName } } }' % email.replace('"', '')
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.post(IAP_API_URL, headers={
+                'Authorization': f'Bearer {IAP_TOKEN}',
+                'Content-Type': 'application/json',
+            }, json={'query': query}) as resp:
+                if resp.status != 200:
+                    logger.warning(f'[IAP] HTTP {resp.status}')
+                    return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback
+                data = await resp.json()
+                if 'errors' in data or 'error' in data:
+                    logger.warning(f'[IAP] API error: {data}')
+                    return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback
+                users = data.get('data', {}).get('users', {})
+                if users.get('count', 0) == 0:
+                    return {'found': False, 'status': None, 'id': None, 'name': None}
+                row = users['rows'][0]
+                name = ' '.join(filter(None, [row.get('firstName'), row.get('lastName')])) or None
+                return {'found': True, 'status': row.get('status'), 'id': row.get('id'), 'name': name}
+    except Exception as e:
+        logger.warning(f'[IAP] Check failed: {e}')
+        return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback: allow on error
+
 
 async def main_menu(update: Union[Message, CallbackQuery],
                     user: User,
@@ -387,8 +423,37 @@ async def process_auth_email(message: Message, state: FSMContext):
                 ...
         return
 
-    # Save auth
+    # Check email in IAP platform
     user_id = message.from_user.id
+    iap = await check_email_in_iap(email)
+
+    if not iap['found']:
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    get_text('auth_flow', 'email_not_found') or
+                    '<b>❌ Email не найден</b>\n\n'
+                    'Этот email не зарегистрирован на платформе.\n'
+                    'Зарегистрируйтесь как партнёр и попробуйте снова.\n\n'
+                    '📧 Или введите другой email:')
+            except TelegramAPIError:
+                ...
+        return  # Stay in wait_email state
+
+    if iap['status'] is not None and iap['status'] != 1:
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    get_text('auth_flow', 'email_blocked') or
+                    '<b>🚫 Аккаунт заблокирован</b>\n\n'
+                    'Ваш аккаунт на платформе заблокирован.\n'
+                    'Обратитесь в поддержку для разблокировки.')
+            except TelegramAPIError:
+                ...
+        await state.clear()
+        return
+
+    # Save auth — email verified in IAP
     existing = DB.UserAuth.select(user_id)
     if existing:
         DB.UserAuth.update(user_id, email=email, token=None)
