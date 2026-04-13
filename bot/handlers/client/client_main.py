@@ -462,9 +462,9 @@ async def process_auth_email(message: Message, state: FSMContext):
         DB.UserAuth.add(user_id, email, token=None)
     DB.User.update(user_id, registered=True)
 
-    # Auto-assign "Партнёр" tag in admin panel (non-blocking)
+    # Auto-assign "Партнёр" tag + remove "Старый пользователь" in admin panel (non-blocking)
     try:
-        def _assign_partner_tag(uid):
+        def _update_partner_tags(uid):
             _cfg = {
                 'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
                 'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
@@ -477,11 +477,15 @@ async def process_auth_email(message: Message, state: FSMContext):
                     'INSERT IGNORE INTO wl_admin_user_tags (user_id, tag) VALUES (%s, %s)',
                     (uid, 'Партнёр'),
                 )
+                cur.execute(
+                    'DELETE FROM wl_admin_user_tags WHERE user_id = %s AND tag = %s',
+                    (uid, 'Старый пользователь'),
+                )
                 c.commit()
             finally:
                 try: c.close()
                 except Exception: pass
-        await asyncio.to_thread(_assign_partner_tag, user_id)
+        await asyncio.to_thread(_update_partner_tags, user_id)
     except Exception as _e:
         logger.warning(f'[partner_tag] Failed for user {user_id}: {_e}')
 
