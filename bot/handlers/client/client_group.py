@@ -22,8 +22,37 @@ from bot.keyboards.client import kb_client_group
 from bot.utils.scenario_texts import get_text, send_screen_message
 from bot.utils.dynamic_kb import get_screen_kb, get_screen_text, reload as reload_scenarios
 import logging
+import time
 import aiohttp
 from bot.initialization import config
+
+# ── Group approval cache ─────────────────────────────────────────────────────
+
+_approved_cache: dict[int, tuple[bool, float]] = {}  # chat_id -> (approved, timestamp)
+_CACHE_TTL = 60  # seconds
+
+
+async def is_group_approved(chat_id: int) -> bool:
+    """Check if group is approved in admin panel. Cached for 60s."""
+    now = time.time()
+    cached = _approved_cache.get(chat_id)
+    if cached and now - cached[1] < _CACHE_TTL:
+        return cached[0]
+    try:
+        base = (config.admin_panel_webhook or '').rsplit('/api/', 1)[0]
+        if not base:
+            return True
+        url = f"{base}/api/broadcasts/groups/check-approved/{chat_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    approved = data.get('approved', True)
+                    _approved_cache[chat_id] = (approved, now)
+                    return approved
+    except Exception as e:
+        logging.warning(f'[group_approved] check failed: {e}')
+    return True  # fallback: allow if panel unavailable
 
 
 # ── Bot membership tracking ──────────────────────────────────────────────────
@@ -93,6 +122,8 @@ def _get_txt(screen_id, fallback):
 
 async def group_menu(message: Message):
     """Main support menu — inline buttons."""
+    if not await is_group_approved(message.chat.id):
+        return
     reload_scenarios()
     text = _get_txt('group_menu', '<b>📋 Меню поддержки WINLINE PARTNERS</b>')
     await message.reply(text, reply_markup=_get_kb('group_menu', kb_client_group.group_main_menu))
@@ -100,6 +131,8 @@ async def group_menu(message: Message):
 
 async def group_main_menu_callback(call: CallbackQuery):
     """Return to main group menu from any section."""
+    if not await is_group_approved(call.message.chat.id):
+        return await call.answer()
     text = _get_txt('group_menu', '<b>📋 Меню поддержки WINLINE PARTNERS</b>')
     await call.message.edit_text(text, reply_markup=_get_kb('group_menu', kb_client_group.group_main_menu))
     await call.answer()
@@ -107,6 +140,8 @@ async def group_main_menu_callback(call: CallbackQuery):
 
 async def group_promo_cmd(message: Message):
     """Актуальные промо материалы."""
+    if not await is_group_approved(message.chat.id):
+        return
     text = _get_txt('group_promo', '<b>📢 Актуальные промо материалы</b>\n\nПерейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
     await message.reply(text, reply_markup=_get_kb('group_promo', kb_client_group.promo_menu))
 
@@ -120,6 +155,8 @@ async def group_promo_callback(call: CallbackQuery):
 
 async def group_calendar_cmd(message: Message):
     """Календарь."""
+    if not await is_group_approved(message.chat.id):
+        return
     text = _get_txt('group_calendar', '<b>📅 Календарь</b>\n\nПерейдите по ссылке для просмотра актуального календаря.')
     await message.reply(text, reply_markup=_get_kb('group_calendar', kb_client_group.calendar_menu))
 
@@ -133,6 +170,8 @@ async def group_calendar_callback(call: CallbackQuery):
 
 async def group_landings_cmd(message: Message):
     """Актуальные лендинги."""
+    if not await is_group_approved(message.chat.id):
+        return
     text = _get_txt('group_landings', bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>'))
     await message.reply(text, disable_web_page_preview=True, reply_markup=_get_kb('group_landings', kb_client_group.landings_menu))
 
@@ -155,6 +194,8 @@ async def group_landings_callback(call: CallbackQuery):
 
 async def group_kb_cmd(message: Message):
     """База знаний — динамический список подтем."""
+    if not await is_group_approved(message.chat.id):
+        return
     kb_row = DB.Text.select(where=DB.Text.category == 'knowledge_base')
     kb = kb_row.data if kb_row else {}
     await message.reply(
