@@ -19,7 +19,8 @@ from bot.integrations import DB
 from bot.initialization import bot_texts
 from bot.utils.announce_bot import bot
 from bot.keyboards.client import kb_client_group
-from bot.utils.scenario_texts import get_text
+from bot.utils.scenario_texts import get_text, send_screen_message
+from bot.utils.dynamic_kb import get_screen_kb, get_screen_text, reload as reload_scenarios
 import logging
 import aiohttp
 from bot.initialization import config
@@ -78,72 +79,77 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
 
 # ── Group chat commands ───────────────────────────────────────────────────────
 
+def _get_kb(screen_id, fallback_kb):
+    """Get keyboard from scenarios, fallback to hardcoded."""
+    kb = get_screen_kb(screen_id)
+    return kb or fallback_kb
+
+
+def _get_txt(screen_id, fallback):
+    """Get first message text from scenarios, fallback to provided."""
+    t = get_screen_text(screen_id)
+    return t if t else fallback
+
+
 async def group_menu(message: Message):
     """Main support menu — inline buttons."""
-    text = get_text('group_menu', 'menu_text') or '<b>📋 Меню поддержки WINLINE PARTNERS</b>'
-    await message.reply(text, reply_markup=kb_client_group.group_main_menu)
+    reload_scenarios()
+    text = _get_txt('group_menu', '<b>📋 Меню поддержки WINLINE PARTNERS</b>')
+    await message.reply(text, reply_markup=_get_kb('group_menu', kb_client_group.group_main_menu))
 
 
 async def group_main_menu_callback(call: CallbackQuery):
     """Return to main group menu from any section."""
-    text = get_text('group_menu', 'menu_text') or '<b>📋 Меню поддержки WINLINE PARTNERS</b>'
-    await call.message.edit_text(text, reply_markup=kb_client_group.group_main_menu)
+    text = _get_txt('group_menu', '<b>📋 Меню поддержки WINLINE PARTNERS</b>')
+    await call.message.edit_text(text, reply_markup=_get_kb('group_menu', kb_client_group.group_main_menu))
     await call.answer()
 
 
 async def group_promo_cmd(message: Message):
     """Актуальные промо материалы."""
-    text = get_text('group_promo', 'promo_text') or (
-        '<b>📢 Актуальные промо материалы</b>\n\n'
-        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
-    await message.reply(text, reply_markup=kb_client_group.promo_menu)
+    text = _get_txt('group_promo', '<b>📢 Актуальные промо материалы</b>\n\nПерейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
+    await message.reply(text, reply_markup=_get_kb('group_promo', kb_client_group.promo_menu))
 
 
 async def group_promo_callback(call: CallbackQuery):
     """Промо через callback."""
-    text = get_text('group_promo', 'promo_text') or (
-        '<b>📢 Актуальные промо материалы</b>\n\n'
-        'Перейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
-    await call.message.edit_text(text, reply_markup=kb_client_group.promo_menu)
+    text = _get_txt('group_promo', '<b>📢 Актуальные промо материалы</b>\n\nПерейдите по ссылке для просмотра актуальных баннеров и промо материалов.')
+    await call.message.edit_text(text, reply_markup=_get_kb('group_promo', kb_client_group.promo_menu))
     await call.answer()
 
 
 async def group_calendar_cmd(message: Message):
     """Календарь."""
-    await message.reply(
-        '<b>📅 Календарь</b>\n\n'
-        'Перейдите по ссылке для просмотра актуального календаря.',
-        reply_markup=kb_client_group.calendar_menu)
+    text = _get_txt('group_calendar', '<b>📅 Календарь</b>\n\nПерейдите по ссылке для просмотра актуального календаря.')
+    await message.reply(text, reply_markup=_get_kb('group_calendar', kb_client_group.calendar_menu))
 
 
 async def group_calendar_callback(call: CallbackQuery):
     """Календарь через callback."""
-    await call.message.edit_text(
-        '<b>📅 Календарь</b>\n\n'
-        'Перейдите по ссылке для просмотра актуального календаря.',
-        reply_markup=kb_client_group.calendar_menu)
+    text = _get_txt('group_calendar', '<b>📅 Календарь</b>\n\nПерейдите по ссылке для просмотра актуального календаря.')
+    await call.message.edit_text(text, reply_markup=_get_kb('group_calendar', kb_client_group.calendar_menu))
     await call.answer()
 
 
 async def group_landings_cmd(message: Message):
     """Актуальные лендинги."""
-    text = bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>')
-    await message.reply(text, disable_web_page_preview=True)
+    text = _get_txt('group_landings', bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>'))
+    await message.reply(text, disable_web_page_preview=True, reply_markup=_get_kb('group_landings', kb_client_group.landings_menu))
 
 
 async def group_landings_callback(call: CallbackQuery):
     """Лендинги через callback."""
-    text = bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>')
+    text = _get_txt('group_landings', bot_texts.landings.get('landings_text', '<b>🌐 Список актуальных лендингов</b>'))
     try:
         await call.message.edit_text(
             text, disable_web_page_preview=True,
-            reply_markup=kb_client_group.landings_menu)
+            reply_markup=_get_kb('group_landings', kb_client_group.landings_menu))
     except Exception:
         await call.message.delete()
         await bot.send_message(
             chat_id=call.message.chat.id, text=text,
             disable_web_page_preview=True,
-            reply_markup=kb_client_group.landings_menu)
+            reply_markup=_get_kb('group_landings', kb_client_group.landings_menu))
     await call.answer()
 
 
