@@ -41,15 +41,22 @@ async def is_group_approved(chat_id: int) -> bool:
     try:
         base = (config.admin_panel_webhook or '').rsplit('/api/', 1)[0]
         if not base:
+            logging.warning(f'[group_approved] no base URL configured')
             return True
         url = f"{base}/api/broadcasts/groups/check-approved/{chat_id}"
+        logging.info(f'[group_approved] checking {url}')
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                logging.info(f'[group_approved] response: {resp.status}')
                 if resp.status == 200:
                     data = await resp.json()
                     approved = data.get('approved', True)
+                    logging.info(f'[group_approved] chat_id={chat_id} approved={approved}')
                     _approved_cache[chat_id] = (approved, now)
                     return approved
+                else:
+                    body = await resp.text()
+                    logging.warning(f'[group_approved] {resp.status}: {body[:200]}')
     except Exception as e:
         logging.warning(f'[group_approved] check failed: {e}')
     return True  # fallback: allow if panel unavailable
