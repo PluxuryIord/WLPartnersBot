@@ -48,28 +48,41 @@ ANKETA_COL_MAP = {
 }
 
 
-def _get_or_create_answers_worksheet():
-    """Get or create the 'Ответы анкеты' worksheet."""
+def _get_active_sheet_name():
+    """Read active anketa sheet name from event_settings in DB."""
+    import json, os, mysql.connector
     try:
-        ws = sh.worksheet('Ответы анкеты')
-        # Ensure header is up to date
-        ws.update('A1:I1', [ANKETA_HEADER])
-        return ws
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title='Ответы анкеты', rows=10000, cols=15)
-        ws.update('A1:I1', [ANKETA_HEADER])
-        ws.format('A1:I1', {'textFormat': {'bold': True}})
-        return ws
+        conn = mysql.connector.connect(
+            host=os.getenv('MYSQL_HOST', ''), port=int(os.getenv('MYSQL_PORT', 3306)),
+            user=os.getenv('MYSQL_USER', ''), password=os.getenv('MYSQL_PASSWORD', ''),
+            database=os.getenv('MYSQL_DATABASE', ''),
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT data FROM texts WHERE category = 'event_settings' LIMIT 1")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            return data.get('anketa_active_sheet')
+    except Exception as e:
+        print(f'[google_sheets] Ошибка чтения active sheet: {e}')
+    return None
 
 
 async def new_answers(user_id: str, full_name: str, username: str, answers: dict):
     """
     Save anketa answers to Google Sheets.
     answers: dict of {answerKey: value}, e.g. {'role': 'Трафик', 'company': 'Acme', 'traffic_type': 'Gambling'}
-    Columns are fixed — empty cells for keys not in this branch.
+    Writes to the active sheet (set via admin panel). If no sheet — skips.
     """
     try:
-        ws = _get_or_create_answers_worksheet()
+        sheet_name = _get_active_sheet_name()
+        if not sheet_name:
+            print('[google_sheets] Нет активного листа анкеты — пропускаю запись')
+            return
+
+        ws = sh.worksheet(sheet_name)
 
         # Find next empty row
         col_b = ws.col_values(2)  # User ID column
