@@ -1263,7 +1263,10 @@ async def _anketa_next_or_finish_legacy(user_id: int, state: FSMContext):
 
 async def process_anketa_text(message: Message, state: FSMContext):
     """Handle text answer in event anketa (both flow and legacy)."""
-    await message.delete()
+    try:
+        await message.delete()
+    except TelegramAPIError:
+        ...
     data = await state.get_data()
 
     # Legacy mode
