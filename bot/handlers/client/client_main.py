@@ -1084,20 +1084,23 @@ async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
     kb = None
 
     if step_type == 'choice':
-        # Use screen buttons (they have targetScreen for flow navigation)
+        # Use screen buttons — store mapping in FSM state to keep callback_data short
         buttons_def = screen.get('buttons', {})
         order = buttons_def.get('_order', [])
         buttons = []
-        for key in order:
+        btn_map = {}  # index -> {key, target, screen_id}
+        for i, key in enumerate(order):
             btn = buttons_def.get(key)
             if not btn:
                 continue
             label = btn.get('label', '???')
             target = btn.get('targetScreen', '')
-            buttons.append([label, 'call', f'anketa_flow:{screen_id}:{key}:{target}'])
+            btn_map[str(i)] = {'key': key, 'target': target, 'screen_id': screen_id}
+            buttons.append([label, 'call', f'af:{i}'])
         if buttons:
             from bot.utils.telegram import create_inline
             kb = create_inline(buttons, 1)
+            await state.update_data(anketa_btn_map=btn_map)
 
     elif step_type == 'subscription_check':
         # Show check_text message with "Подписка есть!" button
@@ -1107,9 +1110,11 @@ async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
             text = check_msg['text']
         next_screen = screen.get('nextScreen', '')
         from bot.utils.telegram import create_inline
+        # Store sub check info in FSM state
+        await state.update_data(anketa_sub_info={'screen_id': screen_id, 'next_screen': next_screen})
         kb = create_inline([
             [screen.get('buttons', {}).get('btn_check_sub', {}).get('label', 'Подписка есть!'),
-             'call', f'anketa_sub_check:{screen_id}:{next_screen}']
+             'call', 'as:0']
         ], 1)
 
     elif step_type == 'finish':
@@ -1361,15 +1366,23 @@ async def process_anketa_choice(call: CallbackQuery, state: FSMContext):
 
 async def process_anketa_flow_choice(call: CallbackQuery, state: FSMContext):
     """Handle choice button press in anketa flow (scenario:5 screens)."""
-    # callback format: anketa_flow:{screen_id}:{btn_key}:{target_screen}
+    # callback format: af:{index} — mapping stored in FSM state
     parts = call.data.split(':')
-    if len(parts) < 4:
+    if len(parts) < 2:
         await call.answer()
         return
 
-    screen_id = parts[1]
-    btn_key = parts[2]
-    target_screen = parts[3] if parts[3] else ''
+    idx = parts[1]
+    data = await state.get_data()
+    btn_map = data.get('anketa_btn_map', {})
+    mapping = btn_map.get(idx)
+    if not mapping:
+        await call.answer('Ошибка, попробуйте снова')
+        return
+
+    screen_id = mapping['screen_id']
+    btn_key = mapping['key']
+    target_screen = mapping.get('target', '')
 
     from bot.utils.dynamic_kb import get_screen
     screen = get_screen(screen_id)
@@ -1403,10 +1416,11 @@ async def process_anketa_flow_choice(call: CallbackQuery, state: FSMContext):
 
 async def process_anketa_sub_check(call: CallbackQuery, state: FSMContext):
     """Handle subscription check button in anketa flow."""
-    # callback format: anketa_sub_check:{screen_id}:{next_screen}
-    parts = call.data.split(':')
-    screen_id = parts[1] if len(parts) > 1 else ''
-    next_screen = parts[2] if len(parts) > 2 else ''
+    # callback format: as:0 — mapping stored in FSM state
+    data = await state.get_data()
+    sub_info = data.get('anketa_sub_info', {})
+    screen_id = sub_info.get('screen_id', '')
+    next_screen = sub_info.get('next_screen', '')
 
     from bot.utils.dynamic_kb import get_screen
 
@@ -1632,8 +1646,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
-    dp.callback_query.register(process_anketa_flow_choice, F.data.startswith('anketa_flow:'), FsmEventAnketa.answering)
-    dp.callback_query.register(process_anketa_sub_check, F.data.startswith('anketa_sub_check:'), FsmEventAnketa.answering)
+    dp.callback_query.register(process_anketa_flow_choice, F.data.startswith('af:'), FsmEventAnketa.answering)
+    dp.callback_query.register(process_anketa_sub_check, F.data.startswith('as:'), FsmEventAnketa.answering)
     dp.callback_query.register(process_anketa_choice, F.data.startswith('anketa_choice:'), FsmEventAnketa.answering)
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
     dp.message.register(wait_phone, FsmRegistration.wait_phone)
