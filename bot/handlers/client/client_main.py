@@ -1063,12 +1063,16 @@ async def _start_event_anketa(message: Message, user_id: int, state: FSMContext)
 
 async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
     """Send an anketa flow screen to the user."""
-    from bot.utils.dynamic_kb import get_screen, get_screen_kb, get_screen_text
+    from bot.utils.dynamic_kb import get_screen, get_screen_kb, get_screen_text, reload as reload_scenarios
     from bot.utils.scenario_texts import send_screen_message
 
     screen = get_screen(screen_id)
     if not screen or screen.get('scenario') != 5:
-        # Not an anketa screen → finish
+        # Try reload in case new screens were added
+        reload_scenarios()
+        screen = get_screen(screen_id)
+    if not screen or screen.get('scenario') != 5:
+        logger.error(f'[anketa] Screen not found or not scenario:5: {screen_id}')
         await _anketa_finish(user_id, state)
         return
 
