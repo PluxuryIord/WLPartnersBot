@@ -1081,7 +1081,6 @@ async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
 
     if step_type == 'choice':
         # Use screen buttons (they have targetScreen for flow navigation)
-        # Build keyboard with anketa_flow: prefix so we can catch them
         buttons_def = screen.get('buttons', {})
         order = buttons_def.get('_order', [])
         buttons = []
@@ -1090,13 +1089,41 @@ async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
             if not btn:
                 continue
             label = btn.get('label', '???')
-            action = btn.get('action', '')
             target = btn.get('targetScreen', '')
-            # Use anketa_flow:screenId:btnKey:targetScreen callback
             buttons.append([label, 'call', f'anketa_flow:{screen_id}:{key}:{target}'])
         if buttons:
             from bot.utils.telegram import create_inline
             kb = create_inline(buttons, 1)
+
+    elif step_type == 'subscription_check':
+        # Show check_text message with "Подписка есть!" button
+        messages = screen.get('messages', {})
+        check_msg = messages.get('check_text', {})
+        if check_msg and check_msg.get('text'):
+            text = check_msg['text']
+        next_screen = screen.get('nextScreen', '')
+        from bot.utils.telegram import create_inline
+        kb = create_inline([
+            [screen.get('buttons', {}).get('btn_check_sub', {}).get('label', 'Подписка есть!'),
+             'call', f'anketa_sub_check:{screen_id}:{next_screen}']
+        ], 1)
+
+    elif step_type == 'finish':
+        # Show final text then send QR
+        messages = screen.get('messages', {})
+        final_msg = messages.get('final_text', {})
+        if final_msg and final_msg.get('text'):
+            text = final_msg['text']
+        menu = await send_screen_message(bot, user_id, screen_id, text, reply_markup=None)
+        DB.User.update(mark=user_id, menu_id=menu.message_id)
+        # Add to screen path then finish
+        data = await state.get_data()
+        screen_path = data.get('anketa_screen_path', [])
+        if screen_id not in screen_path:
+            screen_path.append(screen_id)
+        await state.update_data(anketa_screen_path=screen_path)
+        await _anketa_finish(user_id, state)
+        return
 
     # Send the message
     menu = await send_screen_message(bot, user_id, screen_id, text, reply_markup=kb)
@@ -1367,6 +1394,65 @@ async def process_anketa_flow_choice(call: CallbackQuery, state: FSMContext):
         await _anketa_finish(call.from_user.id, state)
 
 
+async def process_anketa_sub_check(call: CallbackQuery, state: FSMContext):
+    """Handle subscription check button in anketa flow."""
+    # callback format: anketa_sub_check:{screen_id}:{next_screen}
+    parts = call.data.split(':')
+    screen_id = parts[1] if len(parts) > 1 else ''
+    next_screen = parts[2] if len(parts) > 2 else ''
+
+    from bot.utils.dynamic_kb import get_screen
+
+    # Check subscription to @WinlinePartners channel
+    try:
+        member = await bot.get_chat_member(-1002066039310, call.from_user.id)
+        is_subscribed = member.status in [
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.CREATOR,
+        ]
+    except Exception as e:
+        logger.error(f'[anketa-sub-check] Error checking subscription: {e}')
+        is_subscribed = False
+
+    if not is_subscribed:
+        # Show failure text as popup alert + inline text
+        screen = get_screen(screen_id)
+        fail_text = ''
+        fail_alert = ''
+        if screen:
+            messages = screen.get('messages', {})
+            fail_msg = messages.get('fail_text', {})
+            fail_text = fail_msg.get('text', '') if fail_msg else ''
+            alert_msg = messages.get('fail_alert', {})
+            fail_alert = alert_msg.get('text', '') if alert_msg else ''
+
+        # Show alert popup
+        popup = fail_alert or fail_text or 'Не получилось проверить подписку. Ты точно подписан(а) на канал @WinlinePartners?'
+        await call.answer(popup, show_alert=True)
+        return
+
+    # Subscription confirmed — proceed
+    await call.answer()
+
+    # Add screen to path
+    data = await state.get_data()
+    screen_path = data.get('anketa_screen_path', [])
+    if screen_id not in screen_path:
+        screen_path.append(screen_id)
+    await state.update_data(anketa_screen_path=screen_path)
+
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+
+    if next_screen:
+        await _send_anketa_screen(call.from_user.id, next_screen, state)
+    else:
+        await _anketa_finish(call.from_user.id, state)
+
+
 async def start_event_anketa_callback(call: CallbackQuery, state: FSMContext):
     """Start event anketa from the 'Заполнить анкету' button."""
     user_id = call.from_user.id
@@ -1540,6 +1626,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
     dp.callback_query.register(process_anketa_flow_choice, F.data.startswith('anketa_flow:'), FsmEventAnketa.answering)
+    dp.callback_query.register(process_anketa_sub_check, F.data.startswith('anketa_sub_check:'), FsmEventAnketa.answering)
     dp.callback_query.register(process_anketa_choice, F.data.startswith('anketa_choice:'), FsmEventAnketa.answering)
     dp.message.register(wait_rl_name, FsmRegistration.wait_rl_name)
     dp.message.register(wait_phone, FsmRegistration.wait_phone)
