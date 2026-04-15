@@ -39,13 +39,7 @@ async def new_prize(user_id: str, prize: str, qr_id: str):
 # Fixed columns: all possible answer keys across all branches
 ANKETA_HEADER = ['Дата', 'User ID', 'ФИО', 'Username', 'Роль', 'Компания', 'Категория трафика', 'Должность', 'Род деятельности']
 # answerKey → column index (0-based)
-ANKETA_COL_MAP = {
-    'role': 4,
-    'company': 5,
-    'traffic_type': 6,
-    'position': 7,
-    'occupation': 8,
-}
+ANKETA_BASE_COLS = 4  # Дата, User ID, ФИО, Username
 
 
 def _get_active_sheet_name():
@@ -84,22 +78,30 @@ async def new_answers(user_id: str, full_name: str, username: str, answers: dict
 
         ws = sh.worksheet(sheet_name)
 
+        # Read header row to build dynamic column map
+        header = ws.row_values(1)
+        col_map = {}
+        for i, h in enumerate(header):
+            if i >= ANKETA_BASE_COLS and h:
+                col_map[h] = i  # answerKey name → column index
+
         # Find next empty row
         col_b = ws.col_values(2)  # User ID column
         empty_line = len(col_b) + 1
 
-        # Build row with fixed 9 columns
-        row = [''] * len(ANKETA_HEADER)
+        # Build row
+        row = [''] * len(header)
         row[0] = dt.now()
         row[1] = str(user_id)
         row[2] = full_name or 'Нет'
         row[3] = username if username else 'Нет'
 
         for key, value in answers.items():
-            col_idx = ANKETA_COL_MAP.get(key)
+            col_idx = col_map.get(key)
             if col_idx is not None:
                 row[col_idx] = value
 
-        ws.update(f'A{empty_line}:I{empty_line}', [row])
+        end_col = chr(ord('A') + len(row) - 1) if len(row) <= 26 else 'Z'
+        ws.update(f'A{empty_line}:{end_col}{empty_line}', [row])
     except Exception as e:
         print(f'[google_sheets] Ошибка записи ответов анкеты: {e}')
