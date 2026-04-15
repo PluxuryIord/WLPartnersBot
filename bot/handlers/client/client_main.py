@@ -1152,22 +1152,7 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     screen_path = data.get('anketa_screen_path', [])
 
     try:
-        from bot.utils.dynamic_kb import get_screen
-        # Build Q&A pairs from answers dict, ordered by screen_path
-        qa_pairs = []
-        seen_keys = set()
-        for sid in screen_path:
-            scr = get_screen(sid)
-            if scr and scr.get('answerKey') and scr['answerKey'] not in seen_keys:
-                key = scr['answerKey']
-                seen_keys.add(key)
-                # Use screen title as question name for Google Sheets
-                qa_pairs.append({
-                    'question': scr.get('title', key),
-                    'answer': answers.get(key, ''),
-                })
-
-        if qa_pairs:
+        if answers:
             user = DB.User.select(user_id)
             full_name = user.full_name if user else ''
             username = user.username if user else ''
@@ -1175,7 +1160,7 @@ async def _anketa_finish(user_id: int, state: FSMContext):
                 user_id=str(user_id),
                 full_name=full_name,
                 username=username,
-                questions_answers=qa_pairs,
+                answers=answers,
             )
     except Exception as e:
         logger.error(f'[anketa-flow] Ошибка отправки в Google Sheets: {e}')

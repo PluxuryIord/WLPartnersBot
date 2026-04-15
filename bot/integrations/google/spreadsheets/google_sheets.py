@@ -36,51 +36,57 @@ async def new_prize(user_id: str, prize: str, qr_id: str):
 
 
 # ─── Лист для ответов анкеты ─────────────────────────────────────────────────
+# Fixed columns: all possible answer keys across all branches
+ANKETA_HEADER = ['Дата', 'User ID', 'ФИО', 'Username', 'Роль', 'Компания', 'Категория трафика', 'Должность', 'Род деятельности']
+# answerKey → column index (0-based)
+ANKETA_COL_MAP = {
+    'role': 4,
+    'company': 5,
+    'traffic_type': 6,
+    'position': 7,
+    'occupation': 8,
+}
+
+
 def _get_or_create_answers_worksheet():
     """Get or create the 'Ответы анкеты' worksheet."""
     try:
-        return sh.worksheet('Ответы анкеты')
+        ws = sh.worksheet('Ответы анкеты')
+        # Ensure header is up to date
+        ws.update('A1:I1', [ANKETA_HEADER])
+        return ws
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title='Ответы анкеты', rows=10000, cols=30)
-        ws.update('A1:E1', [['Дата', 'User ID', 'ФИО', 'Username', 'Вопрос → Ответ']])
-        ws.format('A1:Z1', {'textFormat': {'bold': True}})
+        ws = sh.add_worksheet(title='Ответы анкеты', rows=10000, cols=15)
+        ws.update('A1:I1', [ANKETA_HEADER])
+        ws.format('A1:I1', {'textFormat': {'bold': True}})
         return ws
 
 
-async def new_answers(user_id: str, full_name: str, username: str, questions_answers: list[dict]):
+async def new_answers(user_id: str, full_name: str, username: str, answers: dict):
     """
     Save anketa answers to Google Sheets.
-    questions_answers: [{'question': str, 'answer': str}, ...]
-    Each Q&A pair gets its own column after the base columns.
+    answers: dict of {answerKey: value}, e.g. {'role': 'Трафик', 'company': 'Acme', 'traffic_type': 'Gambling'}
+    Columns are fixed — empty cells for keys not in this branch.
     """
     try:
         ws = _get_or_create_answers_worksheet()
-
-        # Build header row dynamically if questions changed
-        # Columns: Дата | User ID | ФИО | Username | Q1 | Q2 | Q3 | ...
-        header = ['Дата', 'User ID', 'ФИО', 'Username']
-        for qa in questions_answers:
-            header.append(qa['question'])
-
-        # Update header row (in case new questions were added)
-        end_col = chr(ord('A') + len(header) - 1) if len(header) <= 26 else 'Z'
-        ws.update(f'A1:{end_col}1', [header])
 
         # Find next empty row
         col_b = ws.col_values(2)  # User ID column
         empty_line = len(col_b) + 1
 
-        # Build data row
-        row = [
-            dt.now(),
-            str(user_id),
-            full_name or 'Нет',
-            username if username else 'Нет',
-        ]
-        for qa in questions_answers:
-            row.append(qa['answer'])
+        # Build row with fixed 9 columns
+        row = [''] * len(ANKETA_HEADER)
+        row[0] = dt.now()
+        row[1] = str(user_id)
+        row[2] = full_name or 'Нет'
+        row[3] = username if username else 'Нет'
 
-        end_col = chr(ord('A') + len(row) - 1) if len(row) <= 26 else 'Z'
-        ws.update(f'A{empty_line}:{end_col}{empty_line}', [row])
+        for key, value in answers.items():
+            col_idx = ANKETA_COL_MAP.get(key)
+            if col_idx is not None:
+                row[col_idx] = value
+
+        ws.update(f'A{empty_line}:I{empty_line}', [row])
     except Exception as e:
         print(f'[google_sheets] Ошибка записи ответов анкеты: {e}')
