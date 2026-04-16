@@ -122,20 +122,14 @@ def get_anketa_screens():
 
 
 def find_first_anketa_screen():
-    """Find the first anketa screen — linked from event_anketa button."""
+    """
+    Find the entry point of the anketa flow.
+    Prefers `anketa_role` (fixed entry point), falls back to first scenario:5 screen.
+    """
     data = _cache.get('data') or _load()
     screens = data.get('screens', {})
-    event_anketa = screens.get('event_anketa')
-    if not event_anketa:
-        return None
-    # Find button that points to a scenario:5 screen
-    order = event_anketa.get('buttons', {}).get('_order', [])
-    for key in order:
-        btn = event_anketa.get('buttons', {}).get(key)
-        if btn and btn.get('targetScreen'):
-            target = screens.get(btn['targetScreen'])
-            if target and target.get('scenario') == 5:
-                return btn['targetScreen']
+    if 'anketa_role' in screens and screens['anketa_role'].get('scenario') == 5:
+        return 'anketa_role'
     # Fallback: return first scenario:5 screen found
     for sid, s in screens.items():
         if s.get('scenario') == 5:
