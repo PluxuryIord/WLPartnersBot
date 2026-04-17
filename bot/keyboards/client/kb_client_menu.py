@@ -91,6 +91,7 @@ def get_authorized_menu(is_admin=False, event_active=False):
     # Fallback
     fallback = [
         ['База знаний', 'call', 'client_knowledge_base'],
+        ['❓ Спросить ИИ', 'call', 'client_ask_ai'],
         ['Информация по офферу', 'call', 'client_offers'],
         ['Актуальные крео и лендинги', 'call', 'client_promo'],
         ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
@@ -105,6 +106,7 @@ def get_authorized_menu(is_admin=False, event_active=False):
 
 authorized_menu = create_inline([
     ['База знаний', 'call', 'client_knowledge_base'],
+    ['❓ Спросить ИИ', 'call', 'client_ask_ai'],
     ['Информация по офферу', 'call', 'client_offers'],
     ['Актуальные крео и лендинги', 'call', 'client_promo'],
     ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
@@ -114,6 +116,7 @@ authorized_menu = create_inline([
 ], 1)
 authorized_menu_admin = create_inline([
     ['База знаний', 'call', 'client_knowledge_base'],
+    ['❓ Спросить ИИ', 'call', 'client_ask_ai'],
     ['Информация по офферу', 'call', 'client_offers'],
     ['Актуальные крео и лендинги', 'call', 'client_promo'],
     ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
@@ -121,6 +124,11 @@ authorized_menu_admin = create_inline([
     ['Я на мероприятии!', 'call', 'client_at_event'],
     ['⚙️ Меню администратора', 'call', 'admin_menu'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
+], 1)
+
+ask_ai_actions = create_inline([
+    ['❓ Ещё вопрос', 'call', 'client_ask_ai'],
+    ['🔙 В меню', 'call', 'client_back_menu'],
 ], 1)
 
 

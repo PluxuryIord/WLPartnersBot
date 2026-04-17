@@ -27,7 +27,12 @@ from aiogram.utils.markdown import hlink
 
 import bot.keyboards.admin.kb_admin_topic
 from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize, new_answers
-from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth
+from bot.integrations.ai.knowledge_assistant import (
+    ask as ai_ask,
+    get_remaining_questions as ai_remaining,
+    MAX_DAILY_QUESTIONS as AI_MAX_DAILY,
+)
+from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth, FsmAskAi
 from bot.utils.qr_code import generate_qr_on_template
 
 if TYPE_CHECKING:
@@ -1604,6 +1609,98 @@ async def poll_vote_handler(call: CallbackQuery):
         logger.error(f"[poll_vote] {e}")
         await call.answer("Ошибка", show_alert=False)
 
+
+# ─── AI assistant ───────────────────────────────────────────────────────────
+async def ask_ai_start(call: CallbackQuery, state: FSMContext):
+    """Show prompt for AI question, set FSM state."""
+    user_id = call.from_user.id
+    remaining = ai_remaining(user_id)
+    if remaining <= 0:
+        await call.answer(
+            f'Лимит {AI_MAX_DAILY} вопросов в сутки исчерпан. Попробуйте завтра.',
+            show_alert=True,
+        )
+        return
+
+    await state.set_state(FsmAskAi.wait_question)
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    text = (
+        '<b>❓ Спросите ИИ-ассистента</b>\n\n'
+        'Напишите ваш вопрос — я постараюсь ответить на основе базы знаний '
+        'партнёрской программы Winline.\n\n'
+        f'<i>Осталось вопросов сегодня: {remaining}/{AI_MAX_DAILY}</i>'
+    )
+    new_menu = await bot.send_message(
+        chat_id=user_id, text=text, reply_markup=kb_client_menu.back_menu,
+    )
+    DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+    await call.answer()
+
+
+async def ask_ai_process(message: Message, state: FSMContext):
+    """User typed a question — fetch answer from Claude and reply."""
+    user_id = message.from_user.id
+    question = (message.text or '').strip()
+
+    if not question:
+        await message.answer('Пожалуйста, отправьте текст вопроса.')
+        return
+
+    remaining = ai_remaining(user_id)
+    if remaining <= 0:
+        await state.clear()
+        await message.answer(
+            f'⚠️ Лимит {AI_MAX_DAILY} вопросов в сутки исчерпан. Попробуйте завтра.',
+            reply_markup=kb_client_menu.back_menu,
+        )
+        return
+
+    # Show typing indicator while waiting for Claude
+    typing_task = asyncio.create_task(_keep_typing(user_id))
+    try:
+        ok, answer = await ai_ask(user_id, question)
+    finally:
+        typing_task.cancel()
+
+    # Telegram message limit is 4096; trim safely
+    if len(answer) > 3800:
+        answer = answer[:3800] + '\n\n<i>(ответ обрезан)</i>'
+
+    footer = ''
+    if ok:
+        new_remaining = max(0, remaining - 1)
+        footer = f'\n\n<i>Осталось вопросов сегодня: {new_remaining}/{AI_MAX_DAILY}</i>'
+
+    await state.clear()
+    try:
+        await message.answer(
+            answer + footer,
+            reply_markup=kb_client_menu.ask_ai_actions,
+            parse_mode='HTML',
+        )
+    except TelegramAPIError:
+        # If HTML failed (e.g. bad tags from model), retry as plain text
+        import re as _re
+        plain = _re.sub(r'<[^>]+>', '', answer)
+        await message.answer(plain + footer, reply_markup=kb_client_menu.ask_ai_actions)
+
+
+async def _keep_typing(chat_id: int):
+    """Send 'typing' chat action every 4s while AI is thinking."""
+    try:
+        while True:
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action='typing')
+            except TelegramAPIError:
+                pass
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+
+
 def register_handlers_client_main(dp: Dispatcher):
     dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
@@ -1628,6 +1725,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
     dp.callback_query.register(start_event_anketa_callback, F.data == 'client_event_anketa')
+    dp.callback_query.register(ask_ai_start, F.data == 'client_ask_ai')
+    dp.message.register(ask_ai_process, FsmAskAi.wait_question, F.chat.type == 'private')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')

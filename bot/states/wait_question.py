@@ -32,3 +32,6 @@ class FsmAddQuestion(StatesGroup):
 class FsmEditQuestion(StatesGroup):
     wait_text = State()
     wait_options = State()
+
+class FsmAskAi(StatesGroup):
+    wait_question = State()
