@@ -77,11 +77,11 @@ auth_menu = create_inline([
 
 def get_authorized_menu(is_admin=False, event_active=False):
     from bot.utils.dynamic_kb import get_screen_kb_filtered
-    
-    extra = []
+
+    extra = [['❓ Спросить ИИ', 'call', 'client_ask_ai']]
     if is_admin:
         extra.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
-    
+
     # Try dynamic KB first
     skip_actions = [] if event_active else ['client_at_event']
     kb = get_screen_kb_filtered('main_menu', extra_buttons=extra, skip_actions=skip_actions)
