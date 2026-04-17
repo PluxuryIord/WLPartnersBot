@@ -75,10 +75,15 @@ auth_menu = create_inline([
 ], 1)
 
 
-def get_authorized_menu(is_admin=False, event_active=False):
+def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
     from bot.utils.dynamic_kb import get_screen_kb_filtered
+    from bot.integrations.ai.knowledge_assistant import is_user_allowed
 
-    extra = [['❓ Спросить ИИ', 'call', 'client_ask_ai']]
+    show_ai = user_id is not None and is_user_allowed(user_id)
+
+    extra = []
+    if show_ai:
+        extra.append(['❓ Спросить ИИ', 'call', 'client_ask_ai'])
     if is_admin:
         extra.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
 
@@ -87,21 +92,24 @@ def get_authorized_menu(is_admin=False, event_active=False):
     kb = get_screen_kb_filtered('main_menu', extra_buttons=extra, skip_actions=skip_actions)
     if kb:
         return kb
-    
+
     # Fallback
     fallback = [
         ['База знаний', 'call', 'client_knowledge_base'],
-        ['❓ Спросить ИИ', 'call', 'client_ask_ai'],
+    ]
+    if show_ai:
+        fallback.append(['❓ Спросить ИИ', 'call', 'client_ask_ai'])
+    fallback.extend([
         ['Информация по офферу', 'call', 'client_offers'],
         ['Актуальные крео и лендинги', 'call', 'client_promo'],
         ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
         ['Наши соц. сети', 'call', 'client_socials'],
-    ]
+    ])
     if event_active:
         fallback.append(['Я на мероприятии!', 'call', 'client_at_event'])
     fallback.append(['🚪 Выйти из аккаунта', 'call', 'client_logout'])
-    if extra:
-        fallback.extend(extra)
+    if is_admin:
+        fallback.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
     return create_inline(fallback, 1)
 
 authorized_menu = create_inline([

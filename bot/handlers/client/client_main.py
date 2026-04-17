@@ -30,6 +30,7 @@ from bot.integrations.google.spreadsheets.google_sheets import new_user, new_pri
 from bot.integrations.ai.knowledge_assistant import (
     ask as ai_ask,
     get_remaining_questions as ai_remaining,
+    is_user_allowed as ai_is_allowed,
     MAX_DAILY_QUESTIONS as AI_MAX_DAILY,
 )
 from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth, FsmAskAi
@@ -164,7 +165,7 @@ async def main_menu(update: Union[Message, CallbackQuery],
             auth_data = DB.UserAuth.select(user.id)
             if auth_data:
                 email_text = f'\n\n📧 <b>Email:</b> {auth_data.email}' if auth_data.email else ''
-                kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts)
+                kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts, user_id=user.id)
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=get_text('auth_flow', 'auth_success', email=auth_data.email) or f'<b>✅ Вы авторизованы</b>{email_text}',
@@ -201,7 +202,7 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
     auth_data = DB.UserAuth.select(call.from_user.id)
     if auth_data:
         email_text = f'\n\n📧 <b>Email:</b> {auth_data.email}' if auth_data.email else ''
-        kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts)
+        kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts, user_id=call.from_user.id)
         try:
             await call.message.delete()
         except TelegramAPIError:
@@ -504,7 +505,7 @@ async def process_auth_email(message: Message, state: FSMContext):
             ...
 
     is_admin = config.admin_filter.is_admin(user_id)
-    kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts)
+    kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts, user_id=user_id)
     new_menu = await bot.send_photo(
         chat_id=user_id,
         caption=get_text('auth_flow', 'auth_success', email=email) or f'<b>✅ Вы авторизованы</b>\n\n📧 <b>Email:</b> {email}',
@@ -1614,6 +1615,12 @@ async def poll_vote_handler(call: CallbackQuery):
 async def ask_ai_start(call: CallbackQuery, state: FSMContext):
     """Show prompt for AI question, set FSM state."""
     user_id = call.from_user.id
+    if not ai_is_allowed(user_id):
+        await call.answer(
+            'Функция временно доступна только тестировщикам.',
+            show_alert=True,
+        )
+        return
     remaining = ai_remaining(user_id)
     if remaining <= 0:
         await call.answer(
@@ -1644,6 +1651,11 @@ async def ask_ai_process(message: Message, state: FSMContext):
     """User typed a question — fetch answer from Claude and reply."""
     user_id = message.from_user.id
     question = (message.text or '').strip()
+
+    if not ai_is_allowed(user_id):
+        await state.clear()
+        await message.answer('Функция временно доступна только тестировщикам.')
+        return
 
     if not question:
         await message.answer('Пожалуйста, отправьте текст вопроса.')

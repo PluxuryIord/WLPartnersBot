@@ -28,6 +28,26 @@ _kb_cache: dict = {'fetched_at': 0.0, 'text': '', 'titles': []}
 _table_ready = False
 
 
+def _allowed_user_ids() -> set:
+    """Whitelist of user_ids permitted to use the AI feature.
+    Read fresh from env each time so changes take effect without restart.
+    Empty/unset → feature is closed for everyone (returns empty set).
+    """
+    raw = os.getenv('AI_ALLOWED_USER_IDS', '').strip()
+    if not raw:
+        return set()
+    out = set()
+    for part in raw.split(','):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return out
+
+
+def is_user_allowed(user_id: int) -> bool:
+    return int(user_id) in _allowed_user_ids()
+
+
 # ─── infra ──────────────────────────────────────────────────────────────────
 def _get_client() -> Optional[Anthropic]:
     global _client
