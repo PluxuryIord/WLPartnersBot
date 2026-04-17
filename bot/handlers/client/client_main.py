@@ -33,6 +33,7 @@ from bot.integrations.ai.knowledge_assistant import (
     is_user_allowed as ai_is_allowed,
     MAX_DAILY_QUESTIONS as AI_MAX_DAILY,
 )
+from bot.integrations.winline.api import get_user_by_email, get_user_websites
 from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth, FsmAskAi
 from bot.utils.qr_code import generate_qr_on_template
 
@@ -512,6 +513,168 @@ async def process_auth_email(message: Message, state: FSMContext):
         photo='AgACAgIAAxkBAALAumm79aB6UEyMKSwO7Y4CIuK0V2GvAALrGWsbCkPgSa2z0SVvYvJsAQADAgADeQADOgQ',
         reply_markup=kb)
     DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+
+
+# ── PM: Моя статистика ─────────────────────────────────────────────────────
+
+_WEBSITE_STATUS_LABELS = {
+    1: '✅ активна',
+    2: '⏳ на модерации',
+    3: '❌ отклонена',
+}
+
+
+def _fmt_ts_ms(ts) -> str:
+    """Format a millisecond timestamp (string or int) as 'YYYY-MM-DD HH:MM'."""
+    if ts is None or ts == '':
+        return '—'
+    try:
+        ts_int = int(ts)
+    except (TypeError, ValueError):
+        return '—'
+    # API timestamps appear to be in milliseconds
+    if ts_int > 10**12:
+        ts_int //= 1000
+    try:
+        return datetime.fromtimestamp(ts_int).strftime('%Y-%m-%d %H:%M')
+    except (OSError, ValueError):
+        return '—'
+
+
+def _fmt_money(v) -> str:
+    try:
+        return f'{float(v):.2f}'
+    except (TypeError, ValueError):
+        return '0.00'
+
+
+def _build_stats_text(user: dict, sites: list[dict]) -> str:
+    full_name = ' '.join(filter(None, [user.get('lastName'), user.get('firstName'), user.get('middleName')])).strip() or '—'
+    email = user.get('email') or '—'
+    tg = user.get('telegram') or '—'
+    email_conf = '✅' if user.get('emailConfirmed') else '⚠️ не подтверждён'
+    status_label = '🟢 активен' if user.get('status') == 1 else '🔴 заблокирован'
+
+    # debit = earnings balance, credit = withdrawn (interpretation pending real data)
+    earned = _fmt_money(user.get('debit'))
+    withdrawn = _fmt_money(user.get('credit'))
+
+    parts = [
+        '<b>📊 Моя статистика</b>\n',
+        f'<b>ФИО:</b> {full_name}',
+        f'<b>Email:</b> {email} {email_conf}',
+        f'<b>Telegram:</b> {tg}',
+        f'<b>Статус:</b> {status_label}',
+        f'<b>Регистрация:</b> {_fmt_ts_ms(user.get("created"))}',
+        f'<b>Последний вход:</b> {_fmt_ts_ms(user.get("lastLogin"))}',
+        '',
+        f'💰 <b>Заработано:</b> {earned} ₽',
+        f'💸 <b>Выведено:</b> {withdrawn} ₽',
+        '',
+    ]
+
+    # Websites
+    if not sites:
+        parts.append(
+            '<b>🌐 Площадки:</b> <i>нет</i>\n\n'
+            '⚠️ Без одобренной площадки конверсии не будут засчитываться.\n'
+            'Добавьте площадку в личном кабинете на '
+            '<a href="https://partners.winline.ru">partners.winline.ru</a>.'
+        )
+    else:
+        active = [s for s in sites if s.get('status') == 1]
+        moderating = [s for s in sites if s.get('status') == 2]
+        rejected = [s for s in sites if s.get('status') == 3]
+        parts.append(
+            f'<b>🌐 Площадки:</b> {len(sites)} '
+            f'(активных: {len(active)}, на модерации: {len(moderating)}, отклонённых: {len(rejected)})'
+        )
+        # Show first 10 sites to keep caption under Telegram limits
+        for s in sites[:10]:
+            status = _WEBSITE_STATUS_LABELS.get(s.get('status'), '—')
+            nm = s.get('name') or '—'
+            alias = s.get('alias') or '—'
+            url = s.get('url') or ''
+            url_part = f' — {url}' if url else ''
+            parts.append(f'• <code>{alias}</code> · {nm} · {status}{url_part}')
+        if len(sites) > 10:
+            parts.append(f'<i>…и ещё {len(sites) - 10} площадок</i>')
+        if not active:
+            parts.append(
+                '\n⚠️ Ни одной активной площадки. '
+                'Пока все площадки не одобрены — конверсии не засчитываются.'
+            )
+
+    return '\n'.join(parts)
+
+
+async def pm_my_stats(call: CallbackQuery):
+    """Fetch user stats from Winline IAP and show summary."""
+    user_id = call.from_user.id
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+
+    # Get email from our auth table
+    auth_data = DB.UserAuth.select(user_id)
+    if not auth_data or not getattr(auth_data, 'email', None):
+        is_admin = config.admin_filter.is_admin(user_id)
+        await bot.send_message(
+            user_id,
+            '<b>❌ Не найден email авторизации</b>\n\n'
+            'Пожалуйста, авторизуйтесь заново.',
+            reply_markup=kb_client_menu.get_authorized_menu(
+                is_admin, event_active=get_settings_cached().event_starts, user_id=user_id,
+            ),
+        )
+        await call.answer()
+        return
+
+    email = auth_data.email
+    loader = await bot.send_message(user_id, '⌛️ Загружаю статистику...')
+
+    try:
+        user_info = await get_user_by_email(email)
+        if not user_info:
+            await loader.edit_text(
+                '<b>❌ Не удалось получить данные</b>\n\n'
+                f'Email <code>{email}</code> не найден на платформе или сервис недоступен. '
+                'Попробуйте позже.',
+                reply_markup=kb_client_menu.back_menu,
+            )
+            DB.User.update(mark=user_id, menu_id=loader.message_id)
+            await call.answer()
+            return
+
+        sites = []
+        uid = user_info.get('id')
+        if uid:
+            try:
+                sites = await get_user_websites(int(uid), user_info.get('email'))
+            except Exception as e:
+                logger.warning(f'[stats] websites fetch failed: {e}')
+
+        text = _build_stats_text(user_info, sites)
+        try:
+            await loader.edit_text(text, reply_markup=kb_client_menu.back_menu, disable_web_page_preview=True)
+            new_menu = loader
+        except TelegramAPIError:
+            new_menu = await bot.send_message(
+                user_id, text, reply_markup=kb_client_menu.back_menu, disable_web_page_preview=True,
+            )
+        DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+    except Exception as e:
+        logger.exception(f'[stats] unexpected error: {e}')
+        try:
+            await loader.edit_text(
+                '<b>❌ Ошибка загрузки статистики</b>\n\nПопробуйте позже.',
+                reply_markup=kb_client_menu.back_menu,
+            )
+            DB.User.update(mark=user_id, menu_id=loader.message_id)
+        except TelegramAPIError:
+            pass
+    await call.answer()
 
 
 async def pm_offers(call: CallbackQuery):
@@ -1729,6 +1892,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(pm_kb_back_to_menu, F.data == 'pm_knowledge_base')
     dp.callback_query.register(pm_kb_back, F.data.startswith('pm_kb_back:'))
     dp.callback_query.register(pm_kb_subtopic, F.data.startswith('pm_kb_'))
+    dp.callback_query.register(pm_my_stats, F.data == 'client_my_stats')
     dp.callback_query.register(pm_offers, F.data == 'client_offers')
     dp.callback_query.register(pm_socials, F.data == 'client_socials')
     dp.callback_query.register(pm_promo, F.data == 'client_promo')

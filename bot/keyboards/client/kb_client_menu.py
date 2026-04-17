@@ -81,7 +81,7 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
 
     show_ai = user_id is not None and is_user_allowed(user_id)
 
-    extra = []
+    extra = [['📊 Моя статистика', 'call', 'client_my_stats']]
     if show_ai:
         extra.append(['❓ Спросить ИИ', 'call', 'client_ask_ai'])
     if is_admin:
@@ -95,6 +95,7 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
 
     # Fallback
     fallback = [
+        ['📊 Моя статистика', 'call', 'client_my_stats'],
         ['База знаний', 'call', 'client_knowledge_base'],
     ]
     if show_ai:
