@@ -523,6 +523,13 @@ _WEBSITE_STATUS_LABELS = {
     3: '❌ отклонена',
 }
 
+_ROLE_LABELS = {
+    'partner': 'Партнёр',
+    'admin': 'Администратор',
+    'manager': 'Менеджер',
+    'owner': 'Владелец',
+}
+
 
 def _fmt_ts_ms(ts) -> str:
     """Format a millisecond timestamp (string or int) as 'YYYY-MM-DD HH:MM'."""
@@ -554,6 +561,8 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
     tg = user.get('telegram') or '—'
     email_conf = '✅' if user.get('emailConfirmed') else '⚠️ не подтверждён'
     status_label = '🟢 активен' if user.get('status') == 1 else '🔴 заблокирован'
+    role_raw = user.get('role') or ''
+    role_label = _ROLE_LABELS.get(role_raw, role_raw or '—')
 
     # debit = earnings balance, credit = withdrawn (interpretation pending real data)
     earned = _fmt_money(user.get('debit'))
@@ -564,6 +573,7 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
         f'<b>ФИО:</b> {full_name}',
         f'<b>Email:</b> {email} {email_conf}',
         f'<b>Telegram:</b> {tg}',
+        f'<b>Роль:</b> {role_label}',
         f'<b>Статус:</b> {status_label}',
         f'<b>Регистрация:</b> {_fmt_ts_ms(user.get("created"))}',
         f'<b>Последний вход:</b> {_fmt_ts_ms(user.get("lastLogin"))}',
