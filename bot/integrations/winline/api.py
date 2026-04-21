@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import logging
 import aiohttp
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger('wl_bot')
@@ -104,3 +105,121 @@ async def get_user_websites(user_id: int, user_email: str | None = None) -> list
 
     logger.warning(f'[WL] get_user_websites: all filter attempts failed for user_id={user_id}')
     return []
+
+
+# ── Period stats (statsGroupBy) ────────────────────────────────────────────
+
+MSK_TZ = timezone(timedelta(hours=3))
+
+_RU_MONTHS = {
+    1: 'январь', 2: 'февраль', 3: 'март', 4: 'апрель', 5: 'май', 6: 'июнь',
+    7: 'июль', 8: 'август', 9: 'сентябрь', 10: 'октябрь', 11: 'ноябрь', 12: 'декабрь',
+}
+
+_STATS_QUERY = (
+    "query getStatsGroupBy($dimensions: [String], $metrics: [String!], "
+    "$filter: JSON, $start: String!, $end: String!, $order: [String], "
+    "$limit: Int, $offset: Int) { "
+    "statsGroupBy(dimensions: $dimensions, metrics: $metrics, filter: $filter, "
+    "start: $start, end: $end, order: $order, limit: $limit, offset: $offset) "
+    "{ count rows } }"
+)
+
+_STATS_METRICS = [
+    "clicks",
+    "goal11Quantity",   # REG
+    "goal12Quantity",   # DEP
+    "goal13Quantity",   # DEP2
+    "rewardConfirmed",  # commission confirmed (₽)
+    "rewardCreated",    # commission in processing (₽)
+    "rewardCanceled",   # commission cancelled (₽)
+]
+
+
+def _iso_msk(dt: datetime) -> str:
+    """ISO-8601 with millisecond precision and +03:00 offset, matching panel payloads."""
+    # keep milliseconds, then normalize +0300 -> +03:00
+    s = dt.astimezone(MSK_TZ).strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}'
+    off = dt.astimezone(MSK_TZ).strftime('%z')  # +0300
+    return s + (off[:3] + ':' + off[3:] if off else '+03:00')
+
+
+def get_period_range(period: str) -> tuple[str, str, str]:
+    """Return (start_iso, end_iso, human_label) for a named period.
+
+    period: 'yesterday' | 'week' | 'month'
+    Uses Moscow timezone to match the partner panel.
+    """
+    now = datetime.now(MSK_TZ)
+    today = now.date()
+
+    if period == 'yesterday':
+        d = today - timedelta(days=1)
+        start_d, end_d = d, d
+        label = f'за {d.strftime("%d.%m.%Y")}'
+    elif period == 'week':
+        # previous calendar week Mon-Sun (Python: Mon=0)
+        this_mon = today - timedelta(days=today.weekday())
+        last_mon = this_mon - timedelta(days=7)
+        last_sun = last_mon + timedelta(days=6)
+        start_d, end_d = last_mon, last_sun
+        label = f'за прошлую неделю ({last_mon.strftime("%d.%m")}—{last_sun.strftime("%d.%m.%Y")})'
+    elif period == 'month':
+        first_this = today.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        first_prev = last_prev.replace(day=1)
+        start_d, end_d = first_prev, last_prev
+        label = f'за {_RU_MONTHS[first_prev.month]} {first_prev.year}'
+    else:
+        raise ValueError(f'unknown period: {period}')
+
+    start_dt = datetime(start_d.year, start_d.month, start_d.day, 0, 0, 0, 0, tzinfo=MSK_TZ)
+    end_dt = datetime(end_d.year, end_d.month, end_d.day, 23, 59, 59, 999000, tzinfo=MSK_TZ)
+    return _iso_msk(start_dt), _iso_msk(end_dt), label
+
+
+async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
+    """Fetch aggregated stats for a user between start/end (ISO strings w/ tz).
+
+    Returns a dict with summed metrics or None on error:
+      { clicks, goal11Quantity, goal12Quantity, goal13Quantity,
+        rewardConfirmed, rewardCreated, rewardCanceled }
+    """
+    variables = {
+        "dimensions": ["datetz"],  # matches panel — we sum rows client-side
+        "metrics": _STATS_METRICS,
+        "filter": {
+            "tags": [],
+            "users": [int(user_id)],
+            "usersTags": [],
+            "websites": [],
+            "offers": [],
+            "offersTags": [],
+            "sub": [],
+            "uniqueClicks": False,
+            "granularity": "day",
+            "categories": [],
+            "links": [],
+            "couponGroup": [],
+        },
+        "start": start,
+        "end": end,
+        "order": ["datetz:DESC"],
+        "limit": 1000,
+        "offset": 0,
+    }
+    data = await _gql(_STATS_QUERY, variables)
+    if not data:
+        return None
+    rows = ((data.get('statsGroupBy') or {}).get('rows')) or []
+    totals = {k: 0 for k in _STATS_METRICS}
+    for row in rows:
+        for k in _STATS_METRICS:
+            v = row.get(k)
+            if v is None:
+                continue
+            try:
+                totals[k] += float(v) if isinstance(v, (float, str)) and '.' in str(v) else int(v)
+            except (TypeError, ValueError):
+                pass
+    return totals

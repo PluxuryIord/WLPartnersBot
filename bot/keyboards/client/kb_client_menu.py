@@ -151,6 +151,18 @@ event_qr_new_menu = create_inline([['Стать партнёром', 'call', 'cl
 delete_message = kb_delete_message
 back_menu = create_inline([['🔙 Меню', 'call', 'client_back_menu']], 1)
 
+stats_periods = create_inline([
+    ['📅 За вчера', 'call', 'client_stats_period:yesterday'],
+    ['📅 За прошлую неделю', 'call', 'client_stats_period:week'],
+    ['📅 За прошлый месяц', 'call', 'client_stats_period:month'],
+    ['🔙 Меню', 'call', 'client_back_menu'],
+], 1)
+
+stats_back_to_periods = create_inline([
+    ['🔄 Другой период', 'call', 'client_my_stats'],
+    ['🔙 Меню', 'call', 'client_back_menu'],
+], 1)
+
 user_role = create_inline([
     ['СPA сеть', 'call', 'pick:role:СPA сеть'],
     ['Вебмастер', 'call', 'pick:role:Вебмастер'],
