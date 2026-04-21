@@ -556,7 +556,26 @@ def _fmt_money(v) -> str:
 
 
 def _build_stats_text(user: dict, sites: list[dict]) -> str:
-    full_name = ' '.join(filter(None, [user.get('lastName'), user.get('firstName'), user.get('middleName')])).strip() or '—'
+    full_name = ' '.join(filter(None, [user.get('lastName'), user.get('firstName'), user.get('middleName')])).strip()
+    # try several possible organization-name fields (schema varies)
+    org_candidates = [
+        user.get('organizationName'),
+        user.get('companyName'),
+        (user.get('organization') or {}).get('name') if isinstance(user.get('organization'), dict) else None,
+        (user.get('company') or {}).get('name') if isinstance(user.get('company'), dict) else None,
+    ]
+    org_name = next((o for o in org_candidates if o), None)
+
+    if full_name:
+        ident_label = 'ФИО'
+        ident_value = full_name
+    elif org_name:
+        ident_label = 'Организация'
+        ident_value = org_name
+    else:
+        ident_label = 'ФИО'
+        ident_value = '—'
+
     email = user.get('email') or '—'
     tg = user.get('telegram') or '—'
     email_conf = '✅' if user.get('emailConfirmed') else '⚠️ не подтверждён'
@@ -565,12 +584,12 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
     role_label = _ROLE_LABELS.get(role_raw, role_raw or '—')
 
     # debit = earnings balance, credit = withdrawn (interpretation pending real data)
-    earned = _fmt_money(user.get('debit'))
-    withdrawn = _fmt_money(user.get('credit'))
+    earned = _fmt_rub(user.get('debit'))
+    withdrawn = _fmt_rub(user.get('credit'))
 
     parts = [
         '<b>📊 Моя статистика</b>\n',
-        f'<b>ФИО:</b> {full_name}',
+        f'<b>{ident_label}:</b> {ident_value}',
         f'<b>Email:</b> {email} {email_conf}',
         f'<b>Telegram:</b> {tg}',
         f'<b>Роль:</b> {role_label}',

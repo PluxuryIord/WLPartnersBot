@@ -15,7 +15,7 @@ logger = logging.getLogger('wl_bot')
 IAP_API_URL = os.getenv('IAP_API_URL', 'https://p.winline.ru/api/graphql')
 IAP_TOKEN = os.getenv('IAP_ADMIN_TOKEN', '')
 
-_USER_FIELDS = """
+_USER_FIELDS_BASE = """
   id email role status emailConfirmed
   firstName lastName middleName
   phone telegram
@@ -24,6 +24,20 @@ _USER_FIELDS = """
   created updated lastLogin
   referrer { id email }
 """
+
+# Candidate field names for organization/company (different schemas use different names).
+# We try them in order; first set that succeeds is cached.
+_ORG_FIELD_CANDIDATES = [
+    "organizationName companyName",
+    "organizationName",
+    "companyName",
+    "organization { name }",
+    "company { name }",
+    "",  # finally fall back to no org fields
+]
+
+_USER_FIELDS = _USER_FIELDS_BASE  # will be upgraded lazily on first successful org query
+_ORG_FIELDS_RESOLVED = False
 
 _WEBSITE_FIELDS = """
   id alias
@@ -65,9 +79,28 @@ async def _gql(query: str, variables: dict | None = None, timeout: int = 10) -> 
         return None
 
 
+async def _resolve_org_fields(safe_email: str) -> None:
+    """On first call, probe which organization-field spelling the schema accepts."""
+    global _USER_FIELDS, _ORG_FIELDS_RESOLVED
+    if _ORG_FIELDS_RESOLVED:
+        return
+    for org in _ORG_FIELD_CANDIDATES:
+        fields = _USER_FIELDS_BASE + ('\n  ' + org if org else '')
+        query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe_email, fields)
+        data = await _gql(query)
+        if data is not None and data.get('users') is not None:
+            _USER_FIELDS = fields
+            _ORG_FIELDS_RESOLVED = True
+            if org:
+                logger.info(f'[WL] resolved org fields: {org!r}')
+            return
+    _ORG_FIELDS_RESOLVED = True  # give up; keep base
+
+
 async def get_user_by_email(email: str) -> Optional[dict]:
     """Fetch user profile by email. Returns dict or None."""
     safe = email.replace('"', '')
+    await _resolve_org_fields(safe)
     query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe, _USER_FIELDS)
     data = await _gql(query)
     if not data:
