@@ -604,9 +604,7 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
             status = _WEBSITE_STATUS_LABELS.get(s.get('status'), '—')
             nm = s.get('name') or '—'
             alias = s.get('alias') or '—'
-            url = s.get('url') or ''
-            url_part = f' — {url}' if url else ''
-            parts.append(f'• <code>{alias}</code> · {nm} · {status}{url_part}')
+            parts.append(f'• <code>{alias}</code> · {nm} · {status}')
         if len(sites) > 10:
             parts.append(f'<i>…и ещё {len(sites) - 10} площадок</i>')
         if not active:
