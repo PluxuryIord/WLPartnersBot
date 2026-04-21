@@ -561,9 +561,15 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
     org_candidates = [
         user.get('organizationName'),
         user.get('companyName'),
-        (user.get('organization') or {}).get('name') if isinstance(user.get('organization'), dict) else None,
-        (user.get('company') or {}).get('name') if isinstance(user.get('company'), dict) else None,
+        user.get('orgName'),
+        user.get('legalName'),
+        user.get('fullName'),
+        user.get('shortName'),
     ]
+    for obj_key in ('organization', 'company', 'org', 'legal', 'juridical', 'entity'):
+        v = user.get(obj_key)
+        if isinstance(v, dict):
+            org_candidates.append(v.get('name'))
     org_name = next((o for o in org_candidates if o), None)
 
     if full_name:

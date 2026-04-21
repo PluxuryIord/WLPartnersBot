@@ -79,22 +79,51 @@ async def _gql(query: str, variables: dict | None = None, timeout: int = 10) -> 
         return None
 
 
+async def _introspect_user_fields() -> list[str]:
+    """Return list of scalar/object field names available on the User type."""
+    query = '{ __type(name: "User") { fields { name type { name kind ofType { name kind } } } } }'
+    data = await _gql(query)
+    if not data:
+        return []
+    t = data.get('__type') or {}
+    fields = t.get('fields') or []
+    names = [f.get('name') for f in fields if f.get('name')]
+    return names
+
+
 async def _resolve_org_fields(safe_email: str) -> None:
-    """On first call, probe which organization-field spelling the schema accepts."""
+    """On first call, probe schema to pick org-name field(s) supported by User type."""
     global _USER_FIELDS, _ORG_FIELDS_RESOLVED
     if _ORG_FIELDS_RESOLVED:
         return
-    for org in _ORG_FIELD_CANDIDATES:
-        fields = _USER_FIELDS_BASE + ('\n  ' + org if org else '')
-        query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe_email, fields)
-        data = await _gql(query)
-        if data is not None and data.get('users') is not None:
-            _USER_FIELDS = fields
-            _ORG_FIELDS_RESOLVED = True
-            if org:
-                logger.info(f'[WL] resolved org fields: {org!r}')
-            return
-    _ORG_FIELDS_RESOLVED = True  # give up; keep base
+
+    available = await _introspect_user_fields()
+    logger.info(f'[WL] User type fields ({len(available)}): {sorted(available)}')
+
+    picks: list[str] = []
+    # scalar name fields
+    for cand in ('organizationName', 'companyName', 'orgName', 'inn', 'ogrn', 'kpp', 'legalName', 'fullName', 'shortName'):
+        if cand in available:
+            picks.append(cand)
+    # object-type fields with nested name
+    for cand in ('organization', 'company', 'org', 'legal', 'juridical', 'entity'):
+        if cand in available:
+            picks.append(f'{cand} {{ name }}')
+
+    extra = ('\n  ' + ' '.join(picks)) if picks else ''
+    candidate = _USER_FIELDS_BASE + extra
+    query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe_email, candidate)
+    data = await _gql(query)
+    if data is not None and data.get('users') is not None:
+        _USER_FIELDS = candidate
+        _ORG_FIELDS_RESOLVED = True
+        if picks:
+            logger.info(f'[WL] using org fields: {picks}')
+        return
+
+    # fallback — base only
+    logger.warning('[WL] org-field probe failed, using base fields only')
+    _ORG_FIELDS_RESOLVED = True
 
 
 async def get_user_by_email(email: str) -> Optional[dict]:
