@@ -579,9 +579,8 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
         ident_label = 'Организация'
         ident_value = org_name
     else:
-        # organization without filled name fields — show email as placeholder
-        ident_label = 'Организация'
-        ident_value = user.get('email') or '—'
+        ident_label = 'ФИО'
+        ident_value = '—'
 
     email = user.get('email') or '—'
     tg = user.get('telegram') or '—'
