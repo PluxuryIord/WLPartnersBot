@@ -52,11 +52,16 @@ _WEBSITE_FIELDS = """
 """
 
 
-async def _gql(query: str, variables: dict | None = None, timeout: int = 10) -> dict | None:
-    """POST GraphQL query, return `data` dict or None on error."""
+async def _gql(query: str, variables: dict | None = None, timeout: int = 10,
+               return_errors: bool = False) -> dict | None | tuple:
+    """POST GraphQL query.
+
+    If return_errors=False (default): return `data` dict or None on any error.
+    If return_errors=True: return tuple (data, errors, http_status).
+    """
     if not IAP_TOKEN:
         logger.warning('[WL] IAP_ADMIN_TOKEN not set')
-        return None
+        return (None, None, 0) if return_errors else None
     payload = {'query': query}
     if variables:
         payload['variables'] = variables
@@ -67,72 +72,86 @@ async def _gql(query: str, variables: dict | None = None, timeout: int = 10) -> 
                 headers={'Authorization': f'Bearer {IAP_TOKEN}', 'Content-Type': 'application/json'},
                 json=payload,
             ) as resp:
-                if resp.status != 200:
-                    logger.warning(f'[WL] HTTP {resp.status}')
+                status = resp.status
+                try:
+                    data = await resp.json()
+                except Exception:
+                    text = await resp.text()
+                    logger.warning(f'[WL] HTTP {status} non-json: {text[:200]}')
+                    return (None, None, status) if return_errors else None
+                if status != 200:
+                    logger.warning(f'[WL] HTTP {status} body: {str(data)[:300]}')
+                    if return_errors:
+                        return (data.get('data'), data.get('errors'), status)
                     return None
-                data = await resp.json()
                 if 'errors' in data:
                     logger.warning(f'[WL] GraphQL errors: {data["errors"]}')
+                    if return_errors:
+                        return (data.get('data'), data.get('errors'), status)
                     return None
+                if return_errors:
+                    return (data.get('data'), None, status)
                 return data.get('data')
     except Exception as e:
         logger.warning(f'[WL] request failed: {e}')
-        return None
+        return (None, None, 0) if return_errors else None
 
 
-async def _introspect_user_fields() -> list[str]:
-    """Return list of scalar/object field names available on the User type."""
-    query = '{ __type(name: "User") { fields { name type { name kind ofType { name kind } } } } }'
-    data = await _gql(query)
-    if not data:
-        return []
-    t = data.get('__type') or {}
-    fields = t.get('fields') or []
-    names = [f.get('name') for f in fields if f.get('name')]
-    return names
+_SCALAR_CANDIDATES = [
+    'organizationName', 'companyName', 'orgName', 'legalName',
+    'fullName', 'shortName', 'displayName', 'name',
+    'inn', 'ogrn', 'kpp',
+    'juridicalName', 'entityName', 'contractName',
+    'title',
+]
+_OBJECT_CANDIDATES = [
+    'organization', 'company', 'org', 'legal', 'juridical', 'entity',
+    'requisites', 'profile', 'details',
+]
+
+
+async def _probe_field(safe_email: str, field_frag: str) -> bool:
+    """Return True if adding `field_frag` to the User query works."""
+    fields = _USER_FIELDS_BASE + '\n  ' + field_frag
+    query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe_email, fields)
+    result = await _gql(query, return_errors=True)
+    if not isinstance(result, tuple):
+        return False
+    data, errors, status = result
+    if status == 200 and not errors and data and data.get('users') is not None:
+        return True
+    return False
 
 
 async def _resolve_org_fields(safe_email: str) -> None:
-    """On first call, probe schema to pick org-name field(s) supported by User type."""
+    """On first call, probe each candidate org field separately."""
     global _USER_FIELDS, _ORG_FIELDS_RESOLVED
     if _ORG_FIELDS_RESOLVED:
         return
 
-    available = await _introspect_user_fields()
-    msg = f'[WL] User type fields ({len(available)}): {sorted(available)}'
+    picks: list[str] = []
+    for cand in _SCALAR_CANDIDATES:
+        if await _probe_field(safe_email, cand):
+            picks.append(cand)
+    for cand in _OBJECT_CANDIDATES:
+        if await _probe_field(safe_email, f'{cand} {{ name }}'):
+            picks.append(f'{cand} {{ name }}')
+
+    msg = f'[WL] supported org candidates: {picks}'
     logger.warning(msg)
     print(msg, file=sys.stderr, flush=True)
 
-    picks: list[str] = []
-    # scalar name fields
-    for cand in ('organizationName', 'companyName', 'orgName', 'inn', 'ogrn', 'kpp', 'legalName', 'fullName', 'shortName'):
-        if cand in available:
-            picks.append(cand)
-    # object-type fields with nested name
-    for cand in ('organization', 'company', 'org', 'legal', 'juridical', 'entity'):
-        if cand in available:
-            picks.append(f'{cand} {{ name }}')
-
-    extra = ('\n  ' + ' '.join(picks)) if picks else ''
-    candidate = _USER_FIELDS_BASE + extra
-    query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe_email, candidate)
-    data = await _gql(query)
-    if data is not None and data.get('users') is not None:
-        _USER_FIELDS = candidate
-        _ORG_FIELDS_RESOLVED = True
-        if picks:
-            msg = f'[WL] using org fields: {picks}'
-            logger.warning(msg)
-            print(msg, file=sys.stderr, flush=True)
-        return
-
-    # fallback — base only
-    logger.warning('[WL] org-field probe failed, using base fields only')
+    if picks:
+        _USER_FIELDS = _USER_FIELDS_BASE + '\n  ' + ' '.join(picks)
     _ORG_FIELDS_RESOLVED = True
+
+
+_USER_DUMPED_ONCE = False
 
 
 async def get_user_by_email(email: str) -> Optional[dict]:
     """Fetch user profile by email. Returns dict or None."""
+    global _USER_DUMPED_ONCE
     safe = email.replace('"', '')
     await _resolve_org_fields(safe)
     query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { %s } } }' % (safe, _USER_FIELDS)
@@ -140,7 +159,14 @@ async def get_user_by_email(email: str) -> Optional[dict]:
     if not data:
         return None
     rows = (data.get('users') or {}).get('rows') or []
-    return rows[0] if rows else None
+    user = rows[0] if rows else None
+    if user and not _USER_DUMPED_ONCE:
+        import json as _json
+        msg = f'[WL] first user payload keys: {list(user.keys())} | sample: {_json.dumps(user, ensure_ascii=False)[:400]}'
+        logger.warning(msg)
+        print(msg, file=sys.stderr, flush=True)
+        _USER_DUMPED_ONCE = True
+    return user
 
 
 async def get_user_websites(user_id: int, user_email: str | None = None) -> list[dict]:
