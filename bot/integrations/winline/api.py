@@ -80,7 +80,8 @@ async def _gql(query: str, variables: dict | None = None, timeout: int = 10,
                     logger.warning(f'[WL] HTTP {status} non-json: {text[:200]}')
                     return (None, None, status) if return_errors else None
                 if status != 200:
-                    logger.warning(f'[WL] HTTP {status} body: {str(data)[:300]}')
+                    if not return_errors:
+                        logger.warning(f'[WL] HTTP {status} body: {str(data)[:300]}')
                     if return_errors:
                         return (data.get('data'), data.get('errors'), status)
                     return None
