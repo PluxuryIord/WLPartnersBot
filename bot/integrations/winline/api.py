@@ -5,6 +5,7 @@ Uses IAP_ADMIN_TOKEN (same as for email check) against p.winline.ru/api/graphql.
 from __future__ import annotations
 
 import os
+import sys
 import logging
 import aiohttp
 from datetime import datetime, timedelta, timezone
@@ -98,7 +99,9 @@ async def _resolve_org_fields(safe_email: str) -> None:
         return
 
     available = await _introspect_user_fields()
-    logger.info(f'[WL] User type fields ({len(available)}): {sorted(available)}')
+    msg = f'[WL] User type fields ({len(available)}): {sorted(available)}'
+    logger.warning(msg)
+    print(msg, file=sys.stderr, flush=True)
 
     picks: list[str] = []
     # scalar name fields
@@ -118,7 +121,9 @@ async def _resolve_org_fields(safe_email: str) -> None:
         _USER_FIELDS = candidate
         _ORG_FIELDS_RESOLVED = True
         if picks:
-            logger.info(f'[WL] using org fields: {picks}')
+            msg = f'[WL] using org fields: {picks}'
+            logger.warning(msg)
+            print(msg, file=sys.stderr, flush=True)
         return
 
     # fallback — base only
