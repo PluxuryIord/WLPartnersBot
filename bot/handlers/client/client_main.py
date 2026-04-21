@@ -628,10 +628,7 @@ def _fmt_rub(v) -> str:
     return whole.replace(',', '\u2009') + '.' + frac
 
 
-def _build_period_stats_text(user: dict, sites: list[dict], period_label: str, totals: dict) -> str:
-    full_name = ' '.join(filter(None, [user.get('lastName'), user.get('firstName'), user.get('middleName')])).strip() or '—'
-    email = user.get('email') or '—'
-
+def _build_period_block(period_label: str, totals: dict) -> str:
     reg = int(totals.get('goal11Quantity') or 0)
     dep = int(totals.get('goal12Quantity') or 0)
     dep2 = int(totals.get('goal13Quantity') or 0)
@@ -639,15 +636,8 @@ def _build_period_stats_text(user: dict, sites: list[dict], period_label: str, t
     conf = totals.get('rewardConfirmed') or 0
     proc = totals.get('rewardCreated') or 0
     canc = totals.get('rewardCanceled') or 0
-
-    active_count = sum(1 for s in sites if s.get('status') == 1)
-
-    parts = [
-        f'<b>📊 Статистика {period_label}</b>',
-        '',
-        f'<b>Партнёр:</b> {full_name}',
-        f'<b>Email:</b> {email}',
-        f'<b>Площадок активных:</b> {active_count} из {len(sites)}',
+    return '\n'.join([
+        f'<b>📈 Показатели {period_label}</b>',
         '',
         f'👁 <b>Клики:</b> {clicks}',
         f'📝 <b>РЕГ:</b> {reg}   •   💵 <b>ДЕП:</b> {dep}   •   🔁 <b>ДЕП2:</b> {dep2}',
@@ -656,19 +646,7 @@ def _build_period_stats_text(user: dict, sites: list[dict], period_label: str, t
         f'├ Подтверждена: <b>{_fmt_rub(conf)} ₽</b>',
         f'├ В обработке: <b>{_fmt_rub(proc)} ₽</b>',
         f'└ Аннулирована: <b>{_fmt_rub(canc)} ₽</b>',
-    ]
-    if not sites:
-        parts += [
-            '',
-            '⚠️ У вас нет площадок — конверсии не засчитываются.',
-            'Добавьте площадку в <a href="https://partners.winline.ru">ЛК</a>.',
-        ]
-    elif active_count == 0:
-        parts += [
-            '',
-            '⚠️ Нет активных площадок — конверсии пока не засчитываются.',
-        ]
-    return '\n'.join(parts)
+    ])
 
 
 async def pm_my_stats(call: CallbackQuery):
@@ -692,12 +670,45 @@ async def pm_my_stats(call: CallbackQuery):
         await call.answer()
         return
 
-    msg = await bot.send_message(
-        user_id,
-        '<b>📊 Моя статистика</b>\n\nВыберите период, за который показать цифры:',
-        reply_markup=kb_client_menu.stats_periods,
-    )
-    DB.User.update(mark=user_id, menu_id=msg.message_id)
+    email = auth_data.email
+    loader = await bot.send_message(user_id, '⌛️ Загружаю статистику...')
+    try:
+        user_info = await get_user_by_email(email)
+        if not user_info:
+            await loader.edit_text(
+                '<b>❌ Не удалось получить данные</b>\n\n'
+                f'Email <code>{email}</code> не найден на платформе или сервис недоступен.',
+                reply_markup=kb_client_menu.back_menu,
+            )
+            DB.User.update(mark=user_id, menu_id=loader.message_id)
+            await call.answer()
+            return
+        sites = []
+        uid = user_info.get('id')
+        if uid:
+            try:
+                sites = await get_user_websites(int(uid), user_info.get('email'))
+            except Exception as e:
+                logger.warning(f'[stats] websites fetch failed: {e}')
+        text = _build_stats_text(user_info, sites) + '\n\n━━━━━━━━━━━━━━━\nВыберите период для детальных цифр:'
+        try:
+            await loader.edit_text(text, reply_markup=kb_client_menu.stats_periods, disable_web_page_preview=True)
+            new_menu = loader
+        except TelegramAPIError:
+            new_menu = await bot.send_message(
+                user_id, text, reply_markup=kb_client_menu.stats_periods, disable_web_page_preview=True,
+            )
+        DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+    except Exception as e:
+        logger.exception(f'[stats] unexpected error: {e}')
+        try:
+            await loader.edit_text(
+                '<b>❌ Ошибка загрузки статистики</b>\n\nПопробуйте позже.',
+                reply_markup=kb_client_menu.back_menu,
+            )
+            DB.User.update(mark=user_id, menu_id=loader.message_id)
+        except TelegramAPIError:
+            pass
     await call.answer()
 
 
@@ -764,7 +775,7 @@ async def pm_stats_period(call: CallbackQuery):
             await call.answer()
             return
 
-        text = _build_period_stats_text(user_info, sites, label, totals)
+        text = _build_stats_text(user_info, sites) + '\n\n━━━━━━━━━━━━━━━\n' + _build_period_block(label, totals)
         try:
             await loader.edit_text(
                 text, reply_markup=kb_client_menu.stats_back_to_periods, disable_web_page_preview=True,
