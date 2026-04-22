@@ -36,6 +36,9 @@ from bot.integrations.ai.knowledge_assistant import (
 from bot.integrations.winline.api import get_user_by_email, get_user_websites, get_user_stats, get_period_range
 from bot.states.wait_question import FsmRegistration, FsmEventAnketa, FsmAuth, FsmAskAi
 from bot.utils.qr_code import generate_qr_on_template
+from bot.utils.resend_mailer import send_otp_email, is_configured as mailer_is_configured
+import secrets as _secrets
+import time as _time
 
 if TYPE_CHECKING:
     from aiogram import Dispatcher
@@ -460,7 +463,35 @@ async def process_auth_email(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Save auth — email verified in IAP
+    # IAP passed — if Resend configured, send OTP and wait for code. Otherwise авторизуем сразу (fallback).
+    if mailer_is_configured():
+        code = f'{_secrets.randbelow(1_000_000):06d}'
+        sent = await send_otp_email(email, code)
+        if sent:
+            await state.update_data(
+                auth_email=email,
+                auth_otp=code,
+                auth_otp_expires=int(_time.time()) + 600,  # 10 минут
+                auth_otp_attempts=0,
+            )
+            await state.set_state(FsmAuth.wait_otp)
+            if menu_msg:
+                try:
+                    await menu_msg.edit_text(
+                        get_text('auth_flow', 'otp_prompt', email=email) or
+                        f'<b>📬 Код отправлен на {email}</b>\n\n'
+                        f'Введите 6-значный код из письма. Код действителен 10 минут.')
+                except TelegramAPIError:
+                    ...
+            return
+        else:
+            logger.warning(f'[auth] Resend send failed for {email}, fallback: авторизуем без OTP')
+
+    await _finalize_auth(user_id, email, menu_msg, state)
+
+
+async def _finalize_auth(user_id: int, email: str, menu_msg, state: FSMContext):
+    """Завершить авторизацию: сохранить UserAuth, проставить теги, показать авторизованное меню."""
     existing = DB.UserAuth.select(user_id)
     if existing:
         DB.UserAuth.update(user_id, email=email, token=None)
@@ -498,7 +529,6 @@ async def process_auth_email(message: Message, state: FSMContext):
 
     await state.clear()
 
-    # Delete old message and show authorized menu
     if menu_msg:
         try:
             await menu_msg.delete()
@@ -513,6 +543,62 @@ async def process_auth_email(message: Message, state: FSMContext):
         photo='AgACAgIAAxkBAALAumm79aB6UEyMKSwO7Y4CIuK0V2GvAALrGWsbCkPgSa2z0SVvYvJsAQADAgADeQADOgQ',
         reply_markup=kb)
     DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+
+
+async def process_auth_otp(message: Message, state: FSMContext):
+    """Проверка 6-значного OTP-кода, присланного на email."""
+    try:
+        await message.delete()
+    except TelegramAPIError:
+        ...
+    data = await state.get_data()
+    menu_msg = data.get('auth_menu_message')
+    email = data.get('auth_email')
+    expected = data.get('auth_otp')
+    expires = int(data.get('auth_otp_expires') or 0)
+    attempts = int(data.get('auth_otp_attempts') or 0)
+
+    if not expected or not email:
+        await state.clear()
+        return
+
+    if int(_time.time()) > expires:
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    '<b>⏰ Код истёк</b>\n\nЗапросите новый вход: /start')
+            except TelegramAPIError:
+                ...
+        await state.clear()
+        return
+
+    entered = (message.text or '').strip()
+    # нормализуем: оставим только цифры
+    entered_digits = ''.join(ch for ch in entered if ch.isdigit())
+
+    if entered_digits != expected:
+        attempts += 1
+        if attempts >= 5:
+            if menu_msg:
+                try:
+                    await menu_msg.edit_text(
+                        '<b>🚫 Слишком много попыток</b>\n\nЗапросите новый код: /start')
+                except TelegramAPIError:
+                    ...
+            await state.clear()
+            return
+        await state.update_data(auth_otp_attempts=attempts)
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    f'<b>❌ Неверный код</b>\n\nОсталось попыток: {5 - attempts}\n\n'
+                    f'Введите 6-значный код из письма, отправленного на {email}:')
+            except TelegramAPIError:
+                ...
+        return
+
+    # OK — финализируем авторизацию
+    await _finalize_auth(message.from_user.id, email, menu_msg, state)
 
 
 # ── PM: Моя статистика ─────────────────────────────────────────────────────
@@ -2052,6 +2138,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.message.register(ask_ai_process, FsmAskAi.wait_question, F.chat.type == 'private')
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
+    dp.message.register(process_auth_otp, FsmAuth.wait_otp, F.chat.type == 'private')
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
     dp.callback_query.register(process_anketa_flow_choice, F.data.startswith('af:'), FsmEventAnketa.answering)
     dp.callback_query.register(process_anketa_sub_check, F.data.startswith('as:'), FsmEventAnketa.answering)

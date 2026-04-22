@@ -19,6 +19,7 @@ class FsmRegistration(StatesGroup):
 
 class FsmAuth(StatesGroup):
     wait_email = State()
+    wait_otp = State()
     wait_password = State()
 
 class FsmEventAnketa(StatesGroup):
