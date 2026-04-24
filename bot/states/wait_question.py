@@ -25,6 +25,12 @@ class FsmAuth(StatesGroup):
 class FsmEventAnketa(StatesGroup):
     answering = State()
 
+class FsmEventV2(StatesGroup):
+    """Сценарий 3: расширенный поток мероприятия (email + площадка + розыгрыш)."""
+    wait_email = State()
+    wait_otp = State()
+    wait_site_check = State()
+
 class FsmAddQuestion(StatesGroup):
     wait_text = State()
     wait_type = State()

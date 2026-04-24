@@ -2109,6 +2109,9 @@ async def _keep_typing(chat_id: int):
 
 
 def register_handlers_client_main(dp: Dispatcher):
+    # Сценарий 3 v2 — должен регистрироваться ДО старого at_event, иначе old wins
+    from bot.handlers.client import client_event_v2 as _ev2
+    _ev2.register(dp)
     dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
     dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(poll_vote_handler, F.data.startswith('poll_vote:'))
@@ -2129,7 +2132,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(pm_offers, F.data == 'client_offers')
     dp.callback_query.register(pm_socials, F.data == 'client_socials')
     dp.callback_query.register(pm_promo, F.data == 'client_promo')
-    dp.callback_query.register(at_event, F.data == 'client_at_event')
+    # старый at_event заменён на event_v2_start (см. register выше)
     dp.callback_query.register(logout, F.data == 'client_logout')
     dp.callback_query.register(reg_help, F.data == 'client_reg_help')
     dp.callback_query.register(registration, F.data == 'client_registration')
