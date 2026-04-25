@@ -1169,17 +1169,19 @@ def _sync_issue_event_code(user_id, label='', kind='merch'):
 
             # 4. Generate and insert
             event_code = 'EVT-' + hashlib.md5(f'{user_id}{time.time()}'.encode()).hexdigest()[:8].upper()
+            cur.execute(
+                'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
+                (event_code, label or str(user_id), user_id, 'active'),
+            )
+            # Side-table metadata (env disallows ALTER on wl_event_codes).
             try:
                 cur.execute(
-                    'INSERT INTO wl_event_codes (code, label, user_id, status, kind) VALUES (%s, %s, %s, %s, %s)',
-                    (event_code, label or str(user_id), user_id, 'active', kind),
+                    "INSERT INTO wl_event_code_meta (code, kind) VALUES (%s, %s) "
+                    "ON DUPLICATE KEY UPDATE kind=VALUES(kind)",
+                    (event_code, kind),
                 )
-            except Exception:
-                # Fallback for older schema without `kind` column
-                cur.execute(
-                    'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
-                    (event_code, label or str(user_id), user_id, 'active'),
-                )
+            except Exception as _e:
+                logger.warning(f'[event_code] meta insert skipped: {_e}')
             conn.commit()
             return ('created', event_code)
         finally:
