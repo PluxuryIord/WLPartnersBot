@@ -25,8 +25,8 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from bot.config import config
-from bot.initialization.bot import bot
+from bot.initialization.config import config
+from bot.utils.announce_bot import bot
 from bot.integrations import DB
 from bot.integrations.winline.api import get_user_by_email, get_user_websites
 from bot.states.wait_question import FsmEventV2
