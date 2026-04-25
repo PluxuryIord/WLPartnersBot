@@ -1569,6 +1569,15 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     await state.clear()
     await _send_event_qr(user_id, is_partner=False)
 
+    # Сценарий 3 «Не работаю»: после мерча — промо регистрации + email-флоу
+    try:
+        from bot.handlers.client.client_event_v2 import show_registration_promo
+        import asyncio as _asyncio
+        await _asyncio.sleep(1.2)
+        await show_registration_promo(user_id)
+    except Exception as e:
+        logger.error(f'[anketa-flow] event_v2 promo push failed: {e}')
+
 
 async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMContext):
     """Legacy: load questions from DB (flat list) when no scenario:5 screens exist."""

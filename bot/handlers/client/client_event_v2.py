@@ -397,6 +397,24 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
 
 # ─── Registration push (для «Не работаю» после анкеты) ──────────────────────
 
+async def show_registration_promo(user_id: int):
+    """Показать экран промо регистрации напрямую (без callback).
+
+    Вызывается из _anketa_finish после выдачи QR мерча. Не удаляет
+    предыдущее меню — QR мерча должен остаться у юзера в чате.
+    """
+    fallback = ('<b>Хочешь выиграть 1 из 10 мячей, подписанным легендой '
+                'футбола и амбассадором WINLINE, Роналдиньо?</b>\n\n'
+                'Пройди регистрацию на сайте WINLINE PARTNERS')
+    text = get_text('event_registration_promo', 'promo') or fallback
+    kb = get_screen_kb('event_registration_promo')
+    new_menu = await send_screen_message(
+        bot, user_id, 'event_registration_promo', text,
+        reply_markup=kb, message_key='promo',
+    )
+    DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+
+
 async def event_v2_registration_promo(call: CallbackQuery, state: FSMContext):
     """Показать экран event_registration_promo (после анкеты + QR мерч)."""
     try:
