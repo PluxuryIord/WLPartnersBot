@@ -244,11 +244,10 @@ async def process_event_email(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    if not mailer_is_configured():
-        # Без OTP — сразу проверяем площадку
-        await state.update_data(event_v2_email=email)
-        await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
-        return
+    # OTP временно отключён — сразу проверяем площадку
+    await state.update_data(event_v2_email=email)
+    await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
+    return
 
     code = f'{_secrets.randbelow(1_000_000):06d}'
     sent = await send_otp_email(email, code)
