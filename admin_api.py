@@ -372,6 +372,63 @@ async def reload_texts(request):
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
 
+# ── POST /event/merch-given ──────────────────────────────────────────────────
+
+async def event_merch_given(request):
+    """Send registration promo to user after merch QR was scanned by hostess.
+
+    Body: {"user_id": <telegram_id>}
+    Pulls scenario text + buttons from bot_scenarios for screen
+    `event_registration_promo` and sends via Telegram HTTP API.
+    """
+    try:
+        body = await request.json()
+        user_id = int(body.get('user_id') or 0)
+        if not user_id:
+            return cors_headers(web.json_response({'error': 'user_id is required'}, status=400))
+
+        from bot.utils.scenario_texts import get_text
+        from bot.utils.dynamic_kb import get_screen_kb
+
+        text = get_text('event_registration_promo', 'promo') or (
+            '<b>Хочешь выиграть 1 из 10 мячей, подписанным легендой '
+            'футбола и амбассадором WINLINE, Роналдиньо?</b>\n\n'
+            'Пройди регистрацию на сайте WINLINE PARTNERS'
+        )
+        kb_obj = get_screen_kb('event_registration_promo')
+        # InlineKeyboardMarkup → dict for Telegram HTTP API
+        reply_markup = None
+        if kb_obj is not None:
+            reply_markup = kb_obj.model_dump(exclude_none=True) if hasattr(kb_obj, 'model_dump') else kb_obj.dict(exclude_none=True)
+
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                'chat_id': user_id,
+                'text': text,
+                'parse_mode': 'HTML',
+            }
+            if reply_markup:
+                import json as _json
+                payload['reply_markup'] = _json.dumps(reply_markup)
+            async with session.post(f'{TELEGRAM_API}/sendMessage', data=payload,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as r:
+                resp_data = await r.json()
+                if not resp_data.get('ok'):
+                    return cors_headers(web.json_response(
+                        {'error': resp_data.get('description', 'Telegram error')}, status=500))
+                # Update user's menu_id so back-buttons clean up correctly
+                msg_id = resp_data.get('result', {}).get('message_id')
+                if msg_id:
+                    try:
+                        DB.User.update(mark=user_id, menu_id=msg_id)
+                    except Exception:
+                        pass
+
+        return cors_headers(web.json_response({'ok': True}))
+    except Exception as e:
+        return cors_headers(web.json_response({'error': str(e)}, status=500))
+
+
 # ── App setup ────────────────────────────────────────────────────────────────
 
 
@@ -383,6 +440,7 @@ def make_app():
     app.router.add_post('/broadcasts', send_broadcast)
     app.router.add_post('/auth', auth_user)
     app.router.add_get('/reload-texts', reload_texts)
+    app.router.add_post('/event/merch-given', event_merch_given)
     return app
 
 

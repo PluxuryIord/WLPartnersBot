@@ -1368,7 +1368,7 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     # Get event code (reuse helper)
     event_code = await get_or_create_event_code(user_id) or ''
 
-    reply_markup = kb_client_menu.back_menu if is_partner else kb_client_menu.event_qr_new_menu
+    reply_markup = kb_client_menu.back_menu
     
     # Download QR card from panel server
     qr_card_url = f'https://winlinepartners.ru/api/events/codes/{event_code}/qr-card'
@@ -1568,15 +1568,8 @@ async def _anketa_finish(user_id: int, state: FSMContext):
 
     await state.clear()
     await _send_event_qr(user_id, is_partner=False)
-
-    # Сценарий 3 «Не работаю»: после мерча — промо регистрации + email-флоу
-    try:
-        from bot.handlers.client.client_event_v2 import show_registration_promo
-        import asyncio as _asyncio
-        await _asyncio.sleep(1.2)
-        await show_registration_promo(user_id)
-    except Exception as e:
-        logger.error(f'[anketa-flow] event_v2 promo push failed: {e}')
+    # Промо регистрации показываем не здесь, а после факта выдачи мерча
+    # (хостес скнирует QR → panel scanHandler → admin_api /event/merch-given).
 
 
 async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMContext):
