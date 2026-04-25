@@ -141,9 +141,13 @@ ask_ai_actions = create_inline([
 ], 1)
 
 
-event_menu = create_inline([['Заполнить анкету', 'call', 'client_event_anketa']], 1)
+event_menu = create_inline([
+    ['Работаю с WINLINE PARTNERS', 'call', 'event_v2_partner_yes'],
+    ['Не работаю с WINLINE PARTNERS', 'call', 'event_v2_partner_no'],
+], 1)
 event_menu_admin = create_inline([
-    ['Заполнить анкету', 'call', 'client_event_anketa'],
+    ['Работаю с WINLINE PARTNERS', 'call', 'event_v2_partner_yes'],
+    ['Не работаю с WINLINE PARTNERS', 'call', 'event_v2_partner_no'],
     ['⚙️ Меню администратора', 'call', 'admin_menu'],
 ], 1)
 event_qr_new_menu = create_inline([['Стать партнёром', 'call', 'client_new_partner']], 1)
