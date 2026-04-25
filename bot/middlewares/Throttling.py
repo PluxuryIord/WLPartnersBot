@@ -49,7 +49,7 @@ class ThrottlingMiddleware(BaseMiddleware):
 
         if not event_user:
             return False
-        elif self._admin_filter:
+        elif self._admin_filter and self._admin_filter.is_admin(event_user.id):
             return await handler(event, data)
         elif isinstance(handler, Message) and handler.media_group_id:
             return await handler(event, data)

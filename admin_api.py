@@ -352,16 +352,31 @@ query checkEmail($email: String!) {
 
 # ── GET /reload-texts ────────────────────────────────────────────────────────
 
-async def check_api_key(request):
-    """Middleware: check X-API-Key header for non-public endpoints."""
-    public_paths = ['/auth', '/reload-texts', '/health']
-    if any(request.path.startswith(p) for p in public_paths):
-        return None
-    api_key = request.headers.get('X-API-Key', '')
+@web.middleware
+async def check_api_key(request, handler):
+    """Require X-API-Key header on every endpoint except /health and CORS preflight.
+
+    If ADMIN_API_KEY env is empty, logs a warning once and allows all (legacy
+    behavior, kept for backwards compatibility during rollout).
+    """
+    if request.method == 'OPTIONS' or request.path == '/health':
+        return await handler(request)
     expected = os.environ.get('ADMIN_API_KEY', '')
-    if expected and api_key != expected:
+    if not expected:
+        if not getattr(check_api_key, '_warned', False):
+            print('[admin_api] WARNING: ADMIN_API_KEY env is not set — endpoints are unauthenticated!')
+            check_api_key._warned = True
+        return await handler(request)
+    api_key = request.headers.get('X-API-Key', '')
+    # constant-time comparison to avoid timing oracle
+    import hmac as _hmac
+    if not _hmac.compare_digest(api_key, expected):
         return cors_headers(web.json_response({'error': 'Invalid API key'}, status=403))
-    return None
+    return await handler(request)
+
+
+async def health(request):
+    return web.json_response({'ok': True})
 
 async def reload_texts(request):
     """Reload bot texts from DB (called by admin panel after scenarios save)."""
@@ -455,8 +470,9 @@ async def event_merch_given(request):
 
 
 def make_app():
-    app = web.Application()
+    app = web.Application(middlewares=[check_api_key])
     app.router.add_route('OPTIONS', '/{path_info:.*}', preflight)
+    app.router.add_get('/health', health)
     app.router.add_get('/users/count', get_users_count)
     app.router.add_get('/broadcasts', get_broadcasts)
     app.router.add_post('/broadcasts', send_broadcast)

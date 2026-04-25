@@ -86,13 +86,21 @@ async def check_email_in_iap(email: str) -> dict:
         logger.warning('[IAP] IAP_ADMIN_TOKEN not set, skipping check')
         return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback: allow
 
-    query = '{ users(limit:1, offset:0, where:{email:"%s"}) { count rows { id email status firstName lastName } } }' % email.replace('"', '')
+    # Use parameterized GraphQL variables — string interpolation here lets a crafted
+    # email smuggle additional fields/filters and either bypass the partner gate or
+    # exfiltrate via injected sub-selections.
+    query = (
+        'query checkEmail($email: String!) { '
+        'users(limit:1, offset:0, where:{email:$email}) { '
+        'count rows { id email status firstName lastName } } }'
+    )
+    variables = {'email': email}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.post(IAP_API_URL, headers={
                 'Authorization': f'Bearer {IAP_TOKEN}',
                 'Content-Type': 'application/json',
-            }, json={'query': query}) as resp:
+            }, json={'query': query, 'variables': variables}) as resp:
                 if resp.status != 200:
                     logger.warning(f'[IAP] HTTP {resp.status}')
                     return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback
