@@ -1368,8 +1368,10 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     # Get event code (reuse helper)
     event_code = await get_or_create_event_code(user_id) or ''
 
-    reply_markup = kb_client_menu.back_menu
-    
+    # Без клавиатуры — иначе при back/menu-кликах QR удалится из чата.
+    # Промо регистрации придёт отдельным сообщением после скана QR хостес.
+    reply_markup = None
+
     # Download QR card from panel server
     qr_card_url = f'https://winlinepartners.ru/api/events/codes/{event_code}/qr-card'
     qr_path = f"files/{user_id}_card.png"
