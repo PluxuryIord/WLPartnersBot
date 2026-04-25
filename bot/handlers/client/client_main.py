@@ -584,7 +584,8 @@ async def process_auth_otp(message: Message, state: FSMContext):
     # нормализуем: оставим только цифры
     entered_digits = ''.join(ch for ch in entered if ch.isdigit())
 
-    if entered_digits != expected:
+    import hmac as _hmac
+    if not _hmac.compare_digest(entered_digits, str(expected)):
         attempts += 1
         if attempts >= 5:
             if menu_msg:

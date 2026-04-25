@@ -204,7 +204,8 @@ async def tg_delete_message(session, chat_id, message_id):
 
 
 async def tg_send_authorized_menu(session, user_id, email, is_admin=False):
-    email_text = f'\n\n📧 <b>Email:</b> {email}' if email else ''
+    import html as _html
+    email_text = f'\n\n📧 <b>Email:</b> {_html.escape(email)}' if email else ''
     caption = f'<b>✅ Вы авторизованы</b>{email_text}'
     kb = AUTHORIZED_KEYBOARD_ADMIN if is_admin else AUTHORIZED_KEYBOARD
     resp = await session.post(f'{TELEGRAM_API}/sendPhoto', json={

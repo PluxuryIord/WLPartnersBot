@@ -248,33 +248,12 @@ async def process_event_email(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # OTP временно отключён — сразу проверяем площадку
+    # OTP временно отключён — сразу проверяем площадку.
+    # Когда понадобится включить обратно — поднять отправку OTP здесь и
+    # перевести FSM в FsmEventV2.wait_otp вместо немедленного _after_email_confirmed.
     await state.update_data(event_v2_email=email)
     await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
     return
-
-    code = f'{_secrets.randbelow(1_000_000):06d}'
-    sent = await send_otp_email(email, code)
-    if not sent:
-        await state.update_data(event_v2_email=email)
-        await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
-        return
-
-    await state.update_data(
-        event_v2_email=email,
-        event_v2_otp=code,
-        event_v2_otp_expires=int(_time.time()) + OTP_TTL_SEC,
-        event_v2_otp_attempts=0,
-    )
-    await state.set_state(FsmEventV2.wait_otp)
-    if menu_msg:
-        try:
-            await menu_msg.edit_text(
-                get_text('auth_flow', 'otp_prompt', email=email)
-                or f'<b>📬 Код отправлен на {email}</b>\n\nВведите 6-значный код. Действителен 10 минут.'
-            )
-        except TelegramAPIError:
-            pass
 
 
 async def process_event_otp(message: Message, state: FSMContext):
