@@ -1142,10 +1142,15 @@ def _sync_issue_event_code(user_id, label='', kind='merch'):
             return ('error', None)
 
         try:
-            # 1. Existing code for this user (any status — один юзер, один QR)
+            # 1. Existing code for this user of the SAME kind (один юзер — один QR per kind).
+            # merch и raffle_only коды независимы: «Работаю» юзер не должен получить
+            # старый merch-код, и наоборот.
             cur.execute(
-                'SELECT code FROM wl_event_codes WHERE user_id = %s ORDER BY id DESC LIMIT 1',
-                (user_id,),
+                "SELECT c.code FROM wl_event_codes c "
+                "LEFT JOIN wl_event_code_meta m ON m.code = c.code "
+                "WHERE c.user_id = %s AND COALESCE(m.kind, 'merch') = %s "
+                "ORDER BY c.id DESC LIMIT 1",
+                (user_id, kind),
             )
             existing = cur.fetchone()
             if existing:
