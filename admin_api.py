@@ -387,6 +387,28 @@ async def event_merch_given(request):
         if not user_id:
             return cors_headers(web.json_response({'error': 'user_id is required'}, status=400))
 
+        # Gate by raffle_hidden setting — when on, registration promo не отправляем
+        try:
+            import json as _json_mod, os as _os, mysql.connector as _mc
+            _conn = _mc.connect(
+                host=_os.getenv('MYSQL_HOST', ''), port=int(_os.getenv('MYSQL_PORT', 3306)),
+                user=_os.getenv('MYSQL_USER', ''), password=_os.getenv('MYSQL_PASSWORD', ''),
+                database=_os.getenv('MYSQL_DATABASE', ''),
+            )
+            try:
+                _cur = _conn.cursor(dictionary=True)
+                _cur.execute("SELECT data FROM texts WHERE category='event_settings' LIMIT 1")
+                _row = _cur.fetchone()
+                if _row and _row.get('data'):
+                    _d = _row['data']
+                    _s = _json_mod.loads(_d) if isinstance(_d, str) else _d
+                    if _s and _s.get('raffle_hidden'):
+                        return cors_headers(web.json_response({'ok': True, 'skipped': 'raffle_hidden'}))
+            finally:
+                _conn.close()
+        except Exception:
+            pass
+
         from bot.utils.scenario_texts import get_text
         from bot.utils.dynamic_kb import get_screen_kb
 

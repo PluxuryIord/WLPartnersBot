@@ -1110,7 +1110,7 @@ async def pm_promo(call: CallbackQuery):
     await call.answer()
 
 
-def _sync_issue_event_code(user_id, label=''):
+def _sync_issue_event_code(user_id, label='', kind='merch'):
     """Atomically issue an event code with limit protection.
 
     Uses a MySQL advisory lock (GET_LOCK) to serialize concurrent requests
@@ -1142,10 +1142,10 @@ def _sync_issue_event_code(user_id, label=''):
             return ('error', None)
 
         try:
-            # 1. Existing active code for this user?
+            # 1. Existing code for this user (any status — один юзер, один QR)
             cur.execute(
-                'SELECT code FROM wl_event_codes WHERE user_id = %s AND status = %s LIMIT 1',
-                (user_id, 'active'),
+                'SELECT code FROM wl_event_codes WHERE user_id = %s ORDER BY id DESC LIMIT 1',
+                (user_id,),
             )
             existing = cur.fetchone()
             if existing:
@@ -1169,10 +1169,17 @@ def _sync_issue_event_code(user_id, label=''):
 
             # 4. Generate and insert
             event_code = 'EVT-' + hashlib.md5(f'{user_id}{time.time()}'.encode()).hexdigest()[:8].upper()
-            cur.execute(
-                'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
-                (event_code, label or str(user_id), user_id, 'active'),
-            )
+            try:
+                cur.execute(
+                    'INSERT INTO wl_event_codes (code, label, user_id, status, kind) VALUES (%s, %s, %s, %s, %s)',
+                    (event_code, label or str(user_id), user_id, 'active', kind),
+                )
+            except Exception:
+                # Fallback for older schema without `kind` column
+                cur.execute(
+                    'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
+                    (event_code, label or str(user_id), user_id, 'active'),
+                )
             conn.commit()
             return ('created', event_code)
         finally:
@@ -1192,9 +1199,9 @@ def _sync_issue_event_code(user_id, label=''):
             pass
 
 
-async def issue_event_code(user_id, label=''):
+async def issue_event_code(user_id, label='', kind='merch'):
     """Async wrapper for atomic event code issuing."""
-    return await asyncio.to_thread(_sync_issue_event_code, user_id, label)
+    return await asyncio.to_thread(_sync_issue_event_code, user_id, label, kind)
 
 
 # Backward-compat shim for existing callers that expect `code | None`

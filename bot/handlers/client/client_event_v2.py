@@ -76,13 +76,18 @@ async def _has_active_site(email: str) -> bool:
         return False
 
 
-async def _issue_raffle_ticket(user_id: int, email: str, event_id: int = 0) -> Optional[int]:
-    """Запрос к панели: выдать (или вернуть существующий) номер билета розыгрыша."""
+async def _issue_raffle_ticket(user_id: int, email: str, event_id: int = 0, ticket_code: Optional[str] = None) -> dict:
+    """Запрос к панели: выдать (или вернуть существующий) билет розыгрыша.
+
+    Возвращает dict {ok, ticket_code|ticket_number, disabled}. {} при ошибке сети.
+    """
     base = (config.admin_panel_webhook or '').rstrip('/').rsplit('/api/', 1)[0]
     if not base:
         base = 'https://winlinepartners.ru'
     url = f'{base}/api/internal/event-raffle/issue'
     payload = {'event_id': event_id, 'telegram_id': user_id, 'user_id': user_id, 'email': email}
+    if ticket_code:
+        payload['ticket_code'] = ticket_code
     body = json_mod.dumps(payload, separators=(',', ':')).encode('utf-8')
     headers = {'Content-Type': 'application/json'}
     secret = config.admin_webhook_secret or ''
@@ -95,22 +100,21 @@ async def _issue_raffle_ticket(user_id: int, email: str, event_id: int = 0) -> O
             async with s.post(url, data=body, headers=headers) as r:
                 if r.status != 200:
                     logger.error(f'[event_v2] raffle issue HTTP {r.status}')
-                    return None
-                data = await r.json()
-                return int(data.get('ticket_number')) if data.get('ok') else None
+                    return {}
+                return await r.json()
     except Exception as e:
         logger.error(f'[event_v2] raffle issue error: {e}')
-        return None
+        return {}
 
 
-async def _show_congrats(user_id: int, ticket_number: int):
+async def _show_congrats(user_id: int, ticket_label: str):
     fallback = (
         f'<b>🎉 Поздравляем! Ты стал участником розыгрыша.\n\n'
-        f'Твой номер: №{ticket_number:06d}\n\n'
+        f'Твой номер: №{ticket_label}\n\n'
         f'Информация о победителях придёт 27 мая до 15:00</b>'
     )
-    text = (get_text('event_congrats', 'text') or fallback).replace('№******', f'№{ticket_number:06d}')
-    text = text.replace('{ticket}', f'{ticket_number:06d}')
+    text = (get_text('event_congrats', 'text') or fallback).replace('№******', f'№{ticket_label}')
+    text = text.replace('{ticket}', ticket_label)
     await _show_screen(user_id, 'event_congrats', fallback=text, extra_text='', extra_kb=get_screen_kb('event_congrats'))
     # Override text rendered by _show_screen since it pulled raw template
     user_data = DB.User.select(user_id)
@@ -385,13 +389,21 @@ async def event_v2_site_check_again(call: CallbackQuery, state: FSMContext):
 
 
 async def _award_ticket(user_id: int, email: str, state: FSMContext):
-    ticket = await _issue_raffle_ticket(user_id, email, event_id=0)
-    if ticket is None:
-        await bot.send_message(user_id, '⚠️ Временная ошибка выдачи билета. Попробуйте ещё раз чуть позже.')
-        await state.clear()
-        return
+    # Получаем/выделяем event_code (для «Работаю» — kind='raffle_only', без QR;
+    # для «Не работаю» — уже существует merch-код, вернётся как existing).
+    from bot.handlers.client.client_main import issue_event_code
+    status, event_code = await issue_event_code(user_id, '', kind='raffle_only')
+    suffix = (event_code or '').split('EVT-', 1)[-1] if event_code else ''
+    resp = await _issue_raffle_ticket(user_id, email, event_id=0, ticket_code=suffix or None)
     await state.clear()
-    await _show_congrats(user_id, ticket)
+    if not resp:
+        await bot.send_message(user_id, '⚠️ Временная ошибка выдачи билета. Попробуйте ещё раз чуть позже.')
+        return
+    if resp.get('disabled'):
+        await bot.send_message(user_id, get_text('event_congrats', 'disabled') or '<b>✅ Спасибо за участие!</b>')
+        return
+    label = resp.get('ticket_code') or (f"{resp.get('ticket_number', 0):06d}" if resp.get('ticket_number') is not None else '------')
+    await _show_congrats(user_id, label)
 
 
 # ─── Registration push (для «Не работаю» после анкеты) ──────────────────────
