@@ -1211,6 +1211,41 @@ async def issue_event_code(user_id, label='', kind='merch'):
     return await asyncio.to_thread(_sync_issue_event_code, user_id, label, kind)
 
 
+def _sync_get_user_merch_code(user_id):
+    """Return user's existing merch event_code (or None). Read-only, no allocation."""
+    _db_cfg = {
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
+        'database': os.getenv('MYSQL_DATABASE', ''),
+    }
+    conn = None
+    try:
+        conn = mysql.connector.connect(**_db_cfg)
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT c.code FROM wl_event_codes c "
+            "LEFT JOIN wl_event_code_meta m ON m.code = c.code "
+            "WHERE c.user_id = %s AND COALESCE(m.kind, 'merch') = 'merch' "
+            "ORDER BY c.id DESC LIMIT 1",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return row['code'] if row else None
+    except Exception as e:
+        logger.warning(f'[event_code] lookup error: {e}')
+        return None
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+async def get_user_merch_code(user_id):
+    return await asyncio.to_thread(_sync_get_user_merch_code, user_id)
+
+
 # Backward-compat shim for existing callers that expect `code | None`
 async def get_or_create_event_code(user_id, full_name=''):
     status, code = await issue_event_code(user_id, full_name)

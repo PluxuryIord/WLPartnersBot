@@ -389,12 +389,16 @@ async def event_v2_site_check_again(call: CallbackQuery, state: FSMContext):
 
 
 async def _award_ticket(user_id: int, email: str, state: FSMContext):
-    # Получаем/выделяем event_code (для «Работаю» — kind='raffle_only', без QR;
-    # для «Не работаю» — уже существует merch-код, вернётся как existing).
-    from bot.handlers.client.client_main import issue_event_code
-    status, event_code = await issue_event_code(user_id, '', kind='raffle_only')
-    suffix = (event_code or '').split('EVT-', 1)[-1] if event_code else ''
-    resp = await _issue_raffle_ticket(user_id, email, event_id=0, ticket_code=suffix or None)
+    # «Не работаю» юзер уже имеет merch event_code → ticket_code = его суффикс.
+    # «Работаю» юзер кода не получает (не учитывается в статистике QR) →
+    # генерируем независимый ticket_code локально.
+    from bot.handlers.client.client_main import get_user_merch_code
+    merch_code = await get_user_merch_code(user_id)
+    if merch_code:
+        suffix = merch_code.split('EVT-', 1)[-1]
+    else:
+        suffix = hashlib.md5(f'{user_id}{_time.time()}'.encode()).hexdigest()[:8].upper()
+    resp = await _issue_raffle_ticket(user_id, email, event_id=0, ticket_code=suffix)
     await state.clear()
     if not resp:
         await bot.send_message(user_id, '⚠️ Временная ошибка выдачи билета. Попробуйте ещё раз чуть позже.')
