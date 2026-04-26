@@ -376,7 +376,10 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
     if merch_code:
         suffix = merch_code.split('EVT-', 1)[-1]
     else:
-        suffix = hashlib.md5(f'{user_id}{_time.time()}'.encode()).hexdigest()[:8].upper()
+        # Use cryptographically random suffix — md5(user_id + time.time()) was
+        # predictable to a few seconds and known user_id.
+        import secrets as _secrets_mod
+        suffix = _secrets_mod.token_hex(4).upper()
     resp = await _issue_raffle_ticket(user_id, email, event_id=0, ticket_code=suffix)
     await state.clear()
     if not resp:

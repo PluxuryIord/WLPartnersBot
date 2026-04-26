@@ -315,24 +315,49 @@ async def pm(call: CallbackQuery, user_data: DB.User, state: FSMContext):
     return await main_menu(call, call.from_user, user_data, state)
 
 
+def _sanitize_text(s: str | None, max_len: int = 100) -> str:
+    """Strip control chars, collapse whitespace, cap length. Used for free-form
+    user input that flows into Telegram captions / Google Sheets."""
+    if not s:
+        return ''
+    cleaned = ''.join(ch for ch in s if ch == ' ' or ch.isprintable())
+    cleaned = ' '.join(cleaned.split())
+    return cleaned[:max_len].strip()
+
+
 async def wait_rl_name(message: Message, state: FSMContext):
     await message.delete()
     data = await state.get_data()
-    await state.update_data(rl_full_name=message.text)
+    name = _sanitize_text(message.text, max_len=100)
+    if not name:
+        return
+    await state.update_data(rl_full_name=name)
     menu: Message = data['menu_message']
     await menu.edit_text('<b>Введи твой номер телефона</b>')
     await state.set_state(FsmRegistration.wait_phone)
-    DB.User.update(message.from_user.id, rl_full_name=message.text)
+    DB.User.update(message.from_user.id, rl_full_name=name)
 
 
 async def wait_phone(message: Message, state: FSMContext):
     await message.delete()
     data = await state.get_data()
-    await state.update_data(phone_number=message.text)
+    import re as _re
+    raw = (message.text or '').strip()
+    digits = _re.sub(r'\D', '', raw)
+    if not (10 <= len(digits) <= 15):
+        menu: Message = data.get('menu_message')
+        if menu:
+            try:
+                await menu.edit_text('<b>📱 Введи корректный номер телефона (10–15 цифр).</b>')
+            except TelegramAPIError:
+                pass
+        return
+    phone = ('+' + digits) if not raw.startswith('+') else ('+' + digits)
+    await state.update_data(phone_number=phone)
     menu: Message = data['menu_message']
     await menu.edit_text('<b>Выбери свою роль в компании</b>', reply_markup=kb_client_menu.user_role)
     await state.set_state(FsmRegistration.wait_phone)
-    DB.User.update(message.from_user.id, phone_number=message.text)
+    DB.User.update(message.from_user.id, phone_number=phone)
 
 
 async def pick_role(call: CallbackQuery, state: FSMContext):
@@ -1182,7 +1207,7 @@ def _sync_issue_event_code(user_id, label='', kind='merch'):
                     return ('limit_reached', None)
 
             # 4. Generate and insert
-            event_code = 'EVT-' + hashlib.md5(f'{user_id}{time.time()}'.encode()).hexdigest()[:8].upper()
+            event_code = 'EVT-' + _secrets.token_hex(4).upper()
             cur.execute(
                 'INSERT INTO wl_event_codes (code, label, user_id, status) VALUES (%s, %s, %s, %s)',
                 (event_code, label or str(user_id), user_id, 'active'),
