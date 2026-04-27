@@ -5,14 +5,9 @@ Site Company: buy-bot.ru
 """
 # Site Company: buy-bot.ru
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from aiogram.types import CallbackQuery, Message
-    from aiogram import Dispatcher
-    from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+from aiogram import Dispatcher
+from aiogram.fsm.context import FSMContext
 
 import hashlib
 import hmac
