@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiogram.types import Message
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from typing import Any
 
-    from aiogram.types import TelegramObject, User, Message
+    from aiogram.types import TelegramObject, User
 
     from bot.initialization import ThrottlingConfig
     from bot.filters.admin_filters import AdminFilter
