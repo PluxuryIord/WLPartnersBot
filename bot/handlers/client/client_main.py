@@ -4,7 +4,6 @@ TG: @v1n3r
 Site Company: buy-bot.ru
 """
 
-from __future__ import annotations
 import os
 import hashlib
 import hmac
@@ -21,9 +20,11 @@ from io import BytesIO
 from aiogram.types import BufferedInputFile
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from aiogram.utils.markdown import hlink
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, CallbackQuery, User
 
 import bot.keyboards.admin.kb_admin_topic
 from bot.integrations.google.spreadsheets.google_sheets import new_user, new_prize, new_answers
@@ -42,10 +43,6 @@ import time as _time
 
 if TYPE_CHECKING:
     from aiogram import Dispatcher
-    from aiogram.fsm.context import FSMContext
-    from aiogram.types import Message, CallbackQuery, User
-
-    from typing import Union
 
 from aiogram import F
 from aiogram.filters.command import Command, CommandObject
