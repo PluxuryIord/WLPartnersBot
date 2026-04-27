@@ -41,8 +41,10 @@ from bot.utils.resend_mailer import send_otp_email, is_configured as mailer_is_c
 import secrets as _secrets
 import time as _time
 
+from aiogram import Dispatcher
+
 if TYPE_CHECKING:
-    from aiogram import Dispatcher
+    pass
 
 from aiogram import F
 from aiogram.filters.command import Command, CommandObject
