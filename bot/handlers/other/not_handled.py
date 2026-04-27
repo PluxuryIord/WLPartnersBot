@@ -145,7 +145,7 @@ async def not_handled_callback(call: CallbackQuery, state: FSMContext):
 
 
 async def not_handled_message(message: Message, state: FSMContext,
-                              user_data: DB.User | None, album: list[Message] = False):
+                              user_data: DB.User | None = None, album: list[Message] = False):
     forward_message = None
 
     if message.chat.type == 'private':
