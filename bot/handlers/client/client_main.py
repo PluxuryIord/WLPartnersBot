@@ -81,13 +81,11 @@ async def check_email_in_iap(email: str) -> dict:
     """Check if email exists in IAP platform.
     Returns dict: {'found': bool, 'status': int|None, 'id': int|None, 'name': str|None}
     """
+    NEG = {'found': False, 'status': None, 'id': None, 'name': None}
     if not IAP_TOKEN:
         logger.warning('[IAP] IAP_ADMIN_TOKEN not set, skipping check')
-        return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback: allow
+        return NEG
 
-    # Use parameterized GraphQL variables — string interpolation here lets a crafted
-    # email smuggle additional fields/filters and either bypass the partner gate or
-    # exfiltrate via injected sub-selections.
     query = (
         'query checkEmail($email: String!) { '
         'users(limit:1, offset:0, where:{email:$email}) { '
@@ -101,21 +99,22 @@ async def check_email_in_iap(email: str) -> dict:
                 'Content-Type': 'application/json',
             }, json={'query': query, 'variables': variables}) as resp:
                 if resp.status != 200:
-                    logger.warning(f'[IAP] HTTP {resp.status}')
-                    return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback
+                    body = await resp.text()
+                    logger.warning(f'[IAP] HTTP {resp.status}: {body[:300]}')
+                    return NEG
                 data = await resp.json()
                 if 'errors' in data or 'error' in data:
                     logger.warning(f'[IAP] API error: {data}')
-                    return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback
+                    return NEG
                 users = data.get('data', {}).get('users', {})
                 if users.get('count', 0) == 0:
-                    return {'found': False, 'status': None, 'id': None, 'name': None}
+                    return NEG
                 row = users['rows'][0]
                 name = ' '.join(filter(None, [row.get('firstName'), row.get('lastName')])) or None
                 return {'found': True, 'status': row.get('status'), 'id': row.get('id'), 'name': name}
     except Exception as e:
         logger.warning(f'[IAP] Check failed: {e}')
-        return {'found': True, 'status': 1, 'id': None, 'name': None}  # fallback: allow on error
+        return NEG
 
 
 async def main_menu(update: Union[Message, CallbackQuery],
