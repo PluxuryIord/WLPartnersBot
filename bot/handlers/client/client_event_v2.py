@@ -38,6 +38,22 @@ logger = logging.getLogger('wl_bot.event_v2')
 
 OTP_TTL_SEC = 600
 OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SEC = 60
+
+
+def _otp_keyboard(can_resend: bool = True):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = []
+    if can_resend:
+        rows.append([InlineKeyboardButton(text='📧 Отправить код повторно', callback_data='event_v2_otp_resend')])
+    rows.append([InlineKeyboardButton(text='✏️ Изменить email', callback_data='event_v2_otp_change_email')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _otp_prompt_text(email: str) -> str:
+    base = (get_text('auth_flow', 'otp_prompt', email=email)
+            or f'<b>📬 Код отправлен на {email}</b>\n\nВведите 6-значный код. Действителен 10 минут.')
+    return base + '\n\n<i>Письмо может прийти в течение 1–2 минут. Проверьте папку «Спам».</i>'
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -227,53 +243,48 @@ async def process_event_email(message: Message, state: FSMContext):
                 pass
         return
 
-    info = await get_user_by_email(email)
-    if not info or not info.get('id'):
-        if menu_msg:
-            try:
-                await menu_msg.edit_text(
-                    '<b>❌ Email не найден на платформе</b>\n\n'
-                    'Введите другой email или сначала пройдите регистрацию.'
-                )
-            except TelegramAPIError:
-                pass
-        return
-
-    if info.get('status') is not None and info.get('status') != 1:
-        if menu_msg:
-            try:
-                await menu_msg.edit_text('<b>🚫 Аккаунт заблокирован</b>')
-            except TelegramAPIError:
-                pass
-        await state.clear()
-        return
+    # Проверка существования email в IAP теперь происходит ПОСЛЕ ввода OTP
+    # (чтобы не давать злоумышленнику возможности перебирать почты).
 
     if not mailer_is_configured():
-        # Без OTP — сразу проверяем площадку
+        # Мейлер не настроен — пропускаем OTP. IAP-проверка прямо здесь.
+        info = await get_user_by_email(email)
+        if not info or not info.get('id'):
+            if menu_msg:
+                try:
+                    await menu_msg.edit_text(
+                        '<b>❌ Email не найден на платформе</b>\n\n'
+                        'Введите другой email или сначала пройдите регистрацию.'
+                    )
+                except TelegramAPIError:
+                    pass
+            return
+        if info.get('status') is not None and info.get('status') != 1:
+            if menu_msg:
+                try:
+                    await menu_msg.edit_text('<b>🚫 Аккаунт заблокирован</b>')
+                except TelegramAPIError:
+                    pass
+            await state.clear()
+            return
         await state.update_data(event_v2_email=email)
         await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
         return
 
     code = f'{_secrets.randbelow(1_000_000):06d}'
-    sent = await send_otp_email(email, code)
-    if not sent:
-        await state.update_data(event_v2_email=email)
-        await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
-        return
+    await send_otp_email(email, code)  # результат отправки игнорируем — пишем как будто отправили
 
     await state.update_data(
         event_v2_email=email,
         event_v2_otp=code,
         event_v2_otp_expires=int(_time.time()) + OTP_TTL_SEC,
         event_v2_otp_attempts=0,
+        event_v2_otp_resend_at=int(_time.time()) + OTP_RESEND_COOLDOWN_SEC,
     )
     await state.set_state(FsmEventV2.wait_otp)
     if menu_msg:
         try:
-            await menu_msg.edit_text(
-                get_text('auth_flow', 'otp_prompt', email=email)
-                or f'<b>📬 Код отправлен на {email}</b>\n\nВведите 6-значный код. Действителен 10 минут.'
-            )
+            await menu_msg.edit_text(_otp_prompt_text(email), reply_markup=_otp_keyboard())
         except TelegramAPIError:
             pass
 
@@ -324,7 +335,85 @@ async def process_event_otp(message: Message, state: FSMContext):
                 pass
         return
 
+    # OTP корректен → теперь проверяем существование/статус email в IAP
+    info = await get_user_by_email(email)
+    if not info or not info.get('id'):
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    '<b>❌ Email не найден на платформе</b>\n\n'
+                    'Введите другой email или сначала пройдите регистрацию.',
+                    reply_markup=_otp_keyboard(can_resend=False),  # только «Изменить email»
+                )
+            except TelegramAPIError:
+                pass
+        # Возвращаем в state ожидания email (через кнопку «Изменить email»)
+        return
+    if info.get('status') is not None and info.get('status') != 1:
+        if menu_msg:
+            try:
+                await menu_msg.edit_text('<b>🚫 Аккаунт заблокирован</b>')
+            except TelegramAPIError:
+                pass
+        await state.clear()
+        return
+
     await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
+
+
+async def event_v2_otp_resend(call: CallbackQuery, state: FSMContext):
+    """Юзер нажал «Отправить код повторно» на экране OTP."""
+    data = await state.get_data()
+    email = data.get('event_v2_email')
+    menu_msg = data.get('event_v2_menu')
+    resend_at = int(data.get('event_v2_otp_resend_at') or 0)
+
+    if not email:
+        await call.answer('Сессия истекла, начните сначала', show_alert=True)
+        return
+
+    now = int(_time.time())
+    if now < resend_at:
+        left = resend_at - now
+        await call.answer(f'Подождите ещё {left} сек.', show_alert=False)
+        return
+
+    code = f'{_secrets.randbelow(1_000_000):06d}'
+    await send_otp_email(email, code)
+    await state.update_data(
+        event_v2_otp=code,
+        event_v2_otp_expires=now + OTP_TTL_SEC,
+        event_v2_otp_attempts=0,
+        event_v2_otp_resend_at=now + OTP_RESEND_COOLDOWN_SEC,
+    )
+    if menu_msg:
+        try:
+            await menu_msg.edit_text(_otp_prompt_text(email), reply_markup=_otp_keyboard())
+        except TelegramAPIError:
+            pass
+    await call.answer('Код отправлен повторно')
+
+
+async def event_v2_otp_change_email(call: CallbackQuery, state: FSMContext):
+    """Юзер нажал «Изменить email» — возвращаемся к вводу email."""
+    data = await state.get_data()
+    menu_msg = data.get('event_v2_menu')
+    # Чистим OTP-данные, оставляем только меню
+    await state.set_state(FsmEventV2.wait_email)
+    await state.update_data(
+        event_v2_otp=None, event_v2_otp_expires=None,
+        event_v2_otp_attempts=0, event_v2_otp_resend_at=None,
+        event_v2_email=None,
+    )
+    if menu_msg:
+        try:
+            await menu_msg.edit_text(
+                get_text('event_email_prompt', 'prompt')
+                or '<b>📧 Введите email, указанный при регистрации на платформе</b>'
+            )
+        except TelegramAPIError:
+            pass
+    await call.answer()
 
 
 async def _after_email_confirmed(user_id: int, email: str, menu_msg, state: FSMContext):
@@ -479,3 +568,5 @@ def register(dp):
 
     dp.message.register(process_event_email, FsmEventV2.wait_email, F.chat.type == 'private')
     dp.message.register(process_event_otp,   FsmEventV2.wait_otp,   F.chat.type == 'private')
+    dp.callback_query.register(event_v2_otp_resend,        F.data == 'event_v2_otp_resend')
+    dp.callback_query.register(event_v2_otp_change_email,  F.data == 'event_v2_otp_change_email')
