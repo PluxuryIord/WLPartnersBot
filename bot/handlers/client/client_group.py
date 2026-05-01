@@ -113,6 +113,53 @@ async def bot_removed_from_group(event: ChatMemberUpdated):
             DB.GroupChat.update(mark=event.chat.id, is_active=False)
         await _notify_panel_membership(event.chat.id, event.chat.title or '', event.chat.type, 'removed')
 
+
+async def _notify_panel_migration(old_id: int, new_id: int, title: str):
+    """POST migration event to admin panel so it can move approval / clean up dupes."""
+    url = config.admin_panel_webhook
+    if not url:
+        return
+    base = url.rsplit('/api/', 1)[0]
+    migrate_url = f"{base}/api/broadcasts/groups/migrate"
+    payload = {'old_id': old_id, 'new_id': new_id, 'title': title or ''}
+    headers = {'Content-Type': 'application/json'}
+    secret = config.admin_panel_webhook_secret
+    if secret:
+        headers['x-webhook-secret'] = secret
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(migrate_url, json=payload, headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logging.warning(f'[migrate_webhook] {resp.status}: {body[:200]}')
+                else:
+                    logging.info(f'[migrate_webhook] OK: {old_id} → {new_id}')
+    except Exception as e:
+        logging.warning(f'[migrate_webhook] Failed: {e}')
+
+
+async def bot_chat_migrated(message: Message):
+    """Triggered by the system message that lands in a fresh supergroup right after
+    migration from a regular group. message.migrate_from_chat_id holds the old id."""
+    old_id = message.migrate_from_chat_id
+    if not old_id:
+        return
+    new_id = message.chat.id
+    title = message.chat.title or ''
+
+    # Move our local GroupChat row
+    old = DB.GroupChat.select(mark=old_id)
+    new = DB.GroupChat.select(mark=new_id)
+    if new:
+        DB.GroupChat.update(mark=new_id, is_active=True, title=title or new.title or '')
+    else:
+        DB.GroupChat.add(chat_id=new_id, title=title or (old.title if old else ''))
+    if old:
+        DB.GroupChat.remove(mark=old_id)
+
+    await _notify_panel_migration(old_id, new_id, title)
+
 # ── Group chat commands ───────────────────────────────────────────────────────
 
 def _get_kb(screen_id, fallback_kb):
@@ -330,6 +377,8 @@ def register_handlers_client_group(dp: Dispatcher):
     # Bot membership tracking
     dp.my_chat_member.register(bot_added_to_group)
     dp.my_chat_member.register(bot_removed_from_group)
+    # Service message that arrives once when a regular group is upgraded to supergroup
+    dp.message.register(bot_chat_migrated, F.migrate_from_chat_id)
 
     # Group chat commands
     group_filter = F.chat.type.in_({'group', 'supergroup'})
