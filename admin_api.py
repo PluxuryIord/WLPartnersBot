@@ -467,6 +467,80 @@ async def event_merch_given(request):
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
 
+# ── POST /telegram/relay ─────────────────────────────────────────────────────
+
+async def telegram_relay(request):
+    """Forward a Telegram Bot API call from the panel through this server.
+
+    Body schema:
+      { "method": "sendMessage", "params": { ...JSON params... } }
+      { "method": "sendPhoto",  "params": { chat_id, caption?, parse_mode?, reply_markup?, ... },
+        "file":   { "url": "...", "filename": "...", "mime": "...", "field": "photo" } }
+      { "method": "sendMediaGroup", "params": { chat_id, ... },
+        "files":  [ { "url", "filename", "mime", "attach": "file0" }, ... ] }
+
+    The panel can't reach api.telegram.org (RKN-блок); we relay because the
+    bot host has clean IPv4 outbound to Telegram.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return cors_headers(web.json_response({'ok': False, 'description': 'Invalid JSON'}, status=400))
+
+    method = (body.get('method') or '').strip()
+    if not method or '/' in method or '..' in method:
+        return cors_headers(web.json_response({'ok': False, 'description': 'invalid method'}, status=400))
+    params = body.get('params') or {}
+    file = body.get('file')
+    files = body.get('files')
+
+    timeout = aiohttp.ClientTimeout(total=60)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            if file or files:
+                form = aiohttp.FormData()
+                # Stringify non-string params (Telegram accepts strings in multipart)
+                import json as _json
+                for k, v in params.items():
+                    if isinstance(v, (dict, list)):
+                        form.add_field(k, _json.dumps(v))
+                    elif isinstance(v, bool):
+                        form.add_field(k, 'true' if v else 'false')
+                    else:
+                        form.add_field(k, str(v))
+
+                async def _attach(file_spec):
+                    url = file_spec.get('url')
+                    if not url:
+                        raise ValueError('file.url required')
+                    async with session.get(url) as r:
+                        if r.status != 200:
+                            raise RuntimeError(f'media fetch {r.status} for {url}')
+                        return await r.read()
+
+                if file:
+                    buf = await _attach(file)
+                    form.add_field(file.get('field') or 'document', buf,
+                                   filename=file.get('filename') or 'file',
+                                   content_type=file.get('mime') or 'application/octet-stream')
+                if files:
+                    for f in files:
+                        buf = await _attach(f)
+                        form.add_field(f.get('attach') or f.get('field') or 'file', buf,
+                                       filename=f.get('filename') or 'file',
+                                       content_type=f.get('mime') or 'application/octet-stream')
+
+                async with session.post(f'{TELEGRAM_API}/{method}', data=form) as r:
+                    data = await r.json(content_type=None)
+            else:
+                async with session.post(f'{TELEGRAM_API}/{method}', json=params) as r:
+                    data = await r.json(content_type=None)
+
+        return cors_headers(web.json_response(data))
+    except Exception as e:
+        return cors_headers(web.json_response({'ok': False, 'description': f'relay: {e}'}, status=502))
+
+
 # ── App setup ────────────────────────────────────────────────────────────────
 
 
@@ -480,6 +554,7 @@ def make_app():
     app.router.add_post('/auth', auth_user)
     app.router.add_get('/reload-texts', reload_texts)
     app.router.add_post('/event/merch-given', event_merch_given)
+    app.router.add_post('/telegram/relay', telegram_relay)
     return app
 
 
