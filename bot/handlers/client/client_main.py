@@ -79,42 +79,20 @@ IAP_TOKEN = os.getenv('IAP_ADMIN_TOKEN', '')
 
 async def check_email_in_iap(email: str) -> dict:
     """Check if email exists in IAP platform.
-    Returns dict: {'found': bool, 'status': int|None, 'id': int|None, 'name': str|None}
+    Returns dict: {'found': bool, 'status': int|None, 'id': int|None, 'name': str|None}.
+    Делегируем в bot.integrations.winline.api.get_user_by_email — там запрос в формате,
+    который IAP принимает (наш собственный $email-вариант возвращает HTTP 400).
     """
     NEG = {'found': False, 'status': None, 'id': None, 'name': None}
-    if not IAP_TOKEN:
-        logger.warning('[IAP] IAP_ADMIN_TOKEN not set, skipping check')
-        return NEG
-
-    query = (
-        'query checkEmail($email: String!) { '
-        'users(limit:1, offset:0, where:{email:$email}) { '
-        'count rows { id email status firstName lastName } } }'
-    )
-    variables = {'email': email}
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-            async with session.post(IAP_API_URL, headers={
-                'Authorization': f'Bearer {IAP_TOKEN}',
-                'Content-Type': 'application/json',
-            }, json={'query': query, 'variables': variables}) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning(f'[IAP] HTTP {resp.status}: {body[:300]}')
-                    return NEG
-                data = await resp.json()
-                if 'errors' in data or 'error' in data:
-                    logger.warning(f'[IAP] API error: {data}')
-                    return NEG
-                users = data.get('data', {}).get('users', {})
-                if users.get('count', 0) == 0:
-                    return NEG
-                row = users['rows'][0]
-                name = ' '.join(filter(None, [row.get('firstName'), row.get('lastName')])) or None
-                return {'found': True, 'status': row.get('status'), 'id': row.get('id'), 'name': name}
+        info = await get_user_by_email(email)
     except Exception as e:
         logger.warning(f'[IAP] Check failed: {e}')
         return NEG
+    if not info or not info.get('id'):
+        return NEG
+    name = ' '.join(filter(None, [info.get('firstName'), info.get('lastName')])) or None
+    return {'found': True, 'status': info.get('status'), 'id': info.get('id'), 'name': name}
 
 
 async def main_menu(update: Union[Message, CallbackQuery],
