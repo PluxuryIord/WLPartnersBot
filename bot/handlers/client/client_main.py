@@ -423,6 +423,24 @@ async def start_auth_email(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+AUTH_OTP_RESEND_COOLDOWN_SEC = 60
+
+
+def _auth_otp_keyboard(can_resend: bool = True):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = []
+    if can_resend:
+        rows.append([InlineKeyboardButton(text='📧 Отправить код повторно', callback_data='auth_otp_resend')])
+    rows.append([InlineKeyboardButton(text='✏️ Изменить email', callback_data='auth_otp_change_email')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _auth_otp_prompt_text(email: str) -> str:
+    base = (get_text('auth_flow', 'otp_prompt', email=email)
+            or f'<b>📬 Код отправлен на {email}</b>\n\nВведите 6-значный код из письма. Код действителен 10 минут.')
+    return base + '\n\n<i>Письмо может прийти в течение 1–2 минут. Проверьте папку «Спам».</i>'
+
+
 async def process_auth_email(message: Message, state: FSMContext):
     """Process email input — validate format, save auth."""
     import re
@@ -482,14 +500,13 @@ async def process_auth_email(message: Message, state: FSMContext):
                 auth_otp=code,
                 auth_otp_expires=int(_time.time()) + 600,  # 10 минут
                 auth_otp_attempts=0,
+                auth_otp_resend_at=int(_time.time()) + AUTH_OTP_RESEND_COOLDOWN_SEC,
             )
             await state.set_state(FsmAuth.wait_otp)
             if menu_msg:
                 try:
-                    await menu_msg.edit_text(
-                        get_text('auth_flow', 'otp_prompt', email=email) or
-                        f'<b>📬 Код отправлен на {email}</b>\n\n'
-                        f'Введите 6-значный код из письма. Код действителен 10 минут.')
+                    await menu_msg.edit_text(_auth_otp_prompt_text(email),
+                                             reply_markup=_auth_otp_keyboard())
                 except TelegramAPIError:
                     ...
             return
@@ -497,6 +514,63 @@ async def process_auth_email(message: Message, state: FSMContext):
             logger.warning(f'[auth] Resend send failed for {email}, fallback: авторизуем без OTP')
 
     await _finalize_auth(user_id, email, menu_msg, state)
+
+
+async def auth_otp_resend(call: CallbackQuery, state: FSMContext):
+    """«Отправить код повторно» в обычном auth-flow."""
+    data = await state.get_data()
+    email = data.get('auth_email')
+    menu_msg = data.get('auth_menu_message')
+    resend_at = int(data.get('auth_otp_resend_at') or 0)
+
+    if not email:
+        await call.answer('Сессия истекла, начните сначала', show_alert=True)
+        return
+
+    now = int(_time.time())
+    if now < resend_at:
+        await call.answer(f'Подождите ещё {resend_at - now} сек.', show_alert=False)
+        return
+
+    code = f'{_secrets.randbelow(1_000_000):06d}'
+    sent = await send_otp_email(email, code)
+    if not sent:
+        await call.answer('Не удалось отправить, попробуйте позже', show_alert=True)
+        return
+    await state.update_data(
+        auth_otp=code,
+        auth_otp_expires=now + 600,
+        auth_otp_attempts=0,
+        auth_otp_resend_at=now + AUTH_OTP_RESEND_COOLDOWN_SEC,
+    )
+    if menu_msg:
+        try:
+            await menu_msg.edit_text(_auth_otp_prompt_text(email),
+                                     reply_markup=_auth_otp_keyboard())
+        except TelegramAPIError:
+            ...
+    await call.answer('Код отправлен повторно')
+
+
+async def auth_otp_change_email(call: CallbackQuery, state: FSMContext):
+    """«Изменить email» — возврат к вводу email."""
+    data = await state.get_data()
+    menu_msg = data.get('auth_menu_message')
+    await state.set_state(FsmAuth.wait_email)
+    await state.update_data(
+        auth_otp=None, auth_otp_expires=None,
+        auth_otp_attempts=0, auth_otp_resend_at=None,
+        auth_email=None,
+    )
+    if menu_msg:
+        try:
+            await menu_msg.edit_text(
+                get_text('auth_flow', 'email_prompt')
+                or '<b>📧 Введите email, указанный при регистрации на платформе</b>'
+            )
+        except TelegramAPIError:
+            ...
+    await call.answer()
 
 
 async def _finalize_auth(user_id: int, email: str, menu_msg, state: FSMContext):
@@ -2255,6 +2329,8 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(subscribe, F.data == 'client_check_subscribe')
     dp.message.register(process_auth_email, FsmAuth.wait_email, F.chat.type == 'private')
     dp.message.register(process_auth_otp, FsmAuth.wait_otp, F.chat.type == 'private')
+    dp.callback_query.register(auth_otp_resend,        F.data == 'auth_otp_resend')
+    dp.callback_query.register(auth_otp_change_email,  F.data == 'auth_otp_change_email')
     dp.message.register(process_anketa_text, FsmEventAnketa.answering, F.chat.type == 'private')
     dp.callback_query.register(process_anketa_flow_choice, F.data.startswith('af:'), FsmEventAnketa.answering)
     dp.callback_query.register(process_anketa_sub_check, F.data.startswith('as:'), FsmEventAnketa.answering)
