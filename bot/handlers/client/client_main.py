@@ -1005,32 +1005,82 @@ async def pm_knowledge_base(call: CallbackQuery):
 
 
 async def pm_kb_subtopic(call: CallbackQuery):
-    """Handle individual KB subtopic in PM (dynamic)."""
-    key = call.data  # e.g. pm_kb_lk_overview
-    text_key = key.replace('pm_kb_', '', 1)  # e.g. lk_overview
+    """Handle KB topic / subtopic / back-to-parent in PM."""
+    data = call.data
 
+    # Возврат к родительской теме (приходит из подтемы с фото — нужно подчистить)
+    if data.startswith('pm_kb_back_parent:'):
+        rest = data[len('pm_kb_back_parent:'):]
+        try:
+            parent_key, ids_str = rest.split(':', 1)
+        except ValueError:
+            parent_key, ids_str = rest, ''
+        chat_id = call.from_user.id
+        for mid_str in ids_str.split(','):
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=int(mid_str))
+            except Exception:
+                pass
+        # Эмулируем повторный клик по родительской теме: подменим data и упадём ниже
+        call_data_emulated = f'pm_kb_{parent_key}'
+        return await _pm_kb_show(call, call_data_emulated, fresh_send=True)
+
+    return await _pm_kb_show(call, data, fresh_send=False)
+
+
+async def _pm_kb_show(call: CallbackQuery, callback_data: str, fresh_send: bool):
+    """Render KB topic or subtopic. If fresh_send — отправляем новое сообщение,
+    иначе пытаемся edit_text текущего."""
+    text_key = callback_data.replace('pm_kb_', '', 1)
     kb_row = DB.Text.select(where=DB.Text.category == 'knowledge_base')
     kb = kb_row.data if kb_row else {}
+
+    is_subtopic = '__' in text_key
+    parent_key = text_key.split('__', 1)[0] if is_subtopic else text_key
+    sub_meta = kb.get('_meta', {}).get('subtopics', {}).get(parent_key)
+    has_subs = bool(sub_meta and sub_meta.get('order'))
+
     text = kb.get(text_key, '<b>Информация не найдена</b>')
-
-    chat_id = call.from_user.id
-    sent_ids = []
-
-    # Photo: standard convention {key}_photo
     photo_key = f'{text_key}_photo'
     photo_id = kb.get(photo_key) or None
+    chat_id = call.from_user.id
 
+    # Выбор клавиатуры
+    if is_subtopic:
+        # Подтема — обратно к родителю
+        kb_no_photo = kb_client_group.back_to_parent_topic('pm_kb_', parent_key)
+    elif has_subs:
+        # Тема с подтемами — список подтем + back to KB
+        kb_no_photo = kb_client_group.build_kb_subtopics_menu(kb, parent_key, 'pm_kb_', 'pm_knowledge_base')
+    else:
+        # Простая тема
+        kb_no_photo = kb_client_group.pm_back_to_knowledge_base
+
+    sent_ids = []
     if photo_id:
-        await call.message.delete()
+        if not fresh_send:
+            try: await call.message.delete()
+            except Exception: pass
         msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_id)
         sent_ids.append(msg1.message_id)
-        msg2 = await bot.send_message(
-            chat_id=chat_id, text=text,
-            reply_markup=kb_client_group.pm_back_to_kb_with_ids(sent_ids))
+        if is_subtopic:
+            kb_with_ids = kb_client_group.back_to_parent_topic_with_ids('pm_kb_', parent_key, sent_ids)
+        elif has_subs:
+            # При фото у темы с подтемами — кнопки подтем после контента, но «к базе знаний»
+            # должно подчистить фото; используем обычное back_to_kb с ids нет — оставим как есть
+            kb_with_ids = kb_client_group.build_kb_subtopics_menu(kb, parent_key, 'pm_kb_', 'pm_knowledge_base')
+        else:
+            kb_with_ids = kb_client_group.pm_back_to_kb_with_ids(sent_ids)
+        msg2 = await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_with_ids)
         sent_ids.append(msg2.message_id)
     else:
-        await call.message.edit_text(
-            text, reply_markup=kb_client_group.pm_back_to_knowledge_base)
+        if fresh_send:
+            await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_no_photo)
+        else:
+            try:
+                await call.message.edit_text(text, reply_markup=kb_no_photo)
+            except TelegramAPIError:
+                await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_no_photo)
     await call.answer()
 
 

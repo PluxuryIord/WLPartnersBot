@@ -214,32 +214,71 @@ async def group_kb_cmd(message: Message):
 # ── Knowledge base subtopics ─────────────────────────────────────────────────
 
 async def group_kb_subtopic(call: CallbackQuery):
-    """Handle individual knowledge base subtopic (dynamic)."""
-    key = call.data  # e.g. group_kb_lk_overview
-    text_key = key.replace('group_kb_', '', 1)  # e.g. lk_overview
+    """Handle KB topic / subtopic / back-to-parent in group chats."""
+    data = call.data
 
+    if data.startswith('group_kb_back_parent:'):
+        rest = data[len('group_kb_back_parent:'):]
+        try:
+            parent_key, ids_str = rest.split(':', 1)
+        except ValueError:
+            parent_key, ids_str = rest, ''
+        chat_id = call.message.chat.id
+        for mid_str in ids_str.split(','):
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=int(mid_str))
+            except Exception:
+                pass
+        return await _group_kb_show(call, f'group_kb_{parent_key}', fresh_send=True)
+
+    return await _group_kb_show(call, data, fresh_send=False)
+
+
+async def _group_kb_show(call: CallbackQuery, callback_data: str, fresh_send: bool):
+    text_key = callback_data.replace('group_kb_', '', 1)
     kb_row = DB.Text.select(where=DB.Text.category == 'knowledge_base')
     kb = kb_row.data if kb_row else {}
+
+    is_subtopic = '__' in text_key
+    parent_key = text_key.split('__', 1)[0] if is_subtopic else text_key
+    sub_meta = kb.get('_meta', {}).get('subtopics', {}).get(parent_key)
+    has_subs = bool(sub_meta and sub_meta.get('order'))
+
     text = kb.get(text_key, '<b>Информация не найдена</b>')
-
-    chat_id = call.message.chat.id
-    sent_ids = []
-
-    # Photo: standard convention {key}_photo
     photo_key = f'{text_key}_photo'
     photo_id = kb.get(photo_key) or None
+    chat_id = call.message.chat.id
 
+    if is_subtopic:
+        kb_no_photo = kb_client_group.back_to_parent_topic('group_kb_', parent_key)
+    elif has_subs:
+        kb_no_photo = kb_client_group.build_kb_subtopics_menu(kb, parent_key, 'group_kb_', 'group_knowledge_base')
+    else:
+        kb_no_photo = kb_client_group.back_to_knowledge_base
+
+    sent_ids = []
     if photo_id:
-        await call.message.delete()
+        if not fresh_send:
+            try: await call.message.delete()
+            except Exception: pass
         msg1 = await bot.send_photo(chat_id=chat_id, photo=photo_id)
         sent_ids.append(msg1.message_id)
-        msg2 = await bot.send_message(
-            chat_id=chat_id, text=text,
-            reply_markup=kb_client_group.back_to_kb_with_ids(sent_ids))
+        if is_subtopic:
+            kb_with_ids = kb_client_group.back_to_parent_topic_with_ids('group_kb_', parent_key, sent_ids)
+        elif has_subs:
+            kb_with_ids = kb_client_group.build_kb_subtopics_menu(kb, parent_key, 'group_kb_', 'group_knowledge_base')
+        else:
+            kb_with_ids = kb_client_group.back_to_kb_with_ids(sent_ids)
+        msg2 = await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_with_ids)
         sent_ids.append(msg2.message_id)
     else:
-        await call.message.edit_text(
-            text, reply_markup=kb_client_group.back_to_knowledge_base)
+        if fresh_send:
+            await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_no_photo)
+        else:
+            try:
+                await call.message.edit_text(text, reply_markup=kb_no_photo)
+            except Exception:
+                await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_no_photo)
     await call.answer()
 
 

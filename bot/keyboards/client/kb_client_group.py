@@ -76,6 +76,37 @@ def build_kb_menu(kb_data: dict, prefix: str, back_callback: str):
     return create_inline(buttons, 1)
 
 
+def build_kb_subtopics_menu(kb_data: dict, parent_key: str, prefix: str, kb_back_callback: str):
+    """Build menu of subtopics under a parent topic.
+    Buttons callbacks use the same prefix as parent (e.g. pm_kb_<parent>__<sub>).
+    Adds two-row footer: «🔙 К базе знаний» + «🔙 Меню».
+    """
+    sub_meta = kb_data.get('_meta', {}).get('subtopics', {}).get(parent_key, {})
+    order = sub_meta.get('order', [])
+    titles = sub_meta.get('titles', {})
+    buttons = []
+    for sk in order:
+        title = titles.get(sk, sk)
+        buttons.append([title, 'call', f'{prefix}{parent_key}__{sk}'])
+    buttons.append(['🔙 К базе знаний', 'call', kb_back_callback])
+    return create_inline(buttons, 1)
+
+
+def back_to_parent_topic(prefix: str, parent_key: str):
+    """Inline keyboard: back from subtopic content to the parent topic page."""
+    return create_inline([
+        ['🔙 К теме', 'call', f'{prefix}{parent_key}'],
+    ], 1)
+
+
+def back_to_parent_topic_with_ids(prefix: str, parent_key: str, message_ids: list[int]):
+    """Same as back_to_parent_topic but stores message IDs to delete."""
+    ids_str = ','.join(str(mid) for mid in message_ids)
+    return create_inline([
+        ['🔙 К теме', 'call', f'{prefix}back_parent:{parent_key}:{ids_str}'],
+    ], 1)
+
+
 # ── PM (private message) keyboards ──────────────────────────────────────────
 
 pm_knowledge_base_menu = create_inline([
