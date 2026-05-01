@@ -243,30 +243,28 @@ async def process_event_email(message: Message, state: FSMContext):
                 pass
         return
 
-    # Проверка существования email в IAP теперь происходит ПОСЛЕ ввода OTP
-    # (чтобы не давать злоумышленнику возможности перебирать почты).
+    # IAP-проверка ДО отправки кода
+    info = await get_user_by_email(email)
+    if not info or not info.get('id'):
+        if menu_msg:
+            try:
+                await menu_msg.edit_text(
+                    '<b>❌ Email не найден на платформе</b>\n\n'
+                    'Введите другой email или сначала пройдите регистрацию.'
+                )
+            except TelegramAPIError:
+                pass
+        return
+    if info.get('status') is not None and info.get('status') != 1:
+        if menu_msg:
+            try:
+                await menu_msg.edit_text('<b>🚫 Аккаунт заблокирован</b>')
+            except TelegramAPIError:
+                pass
+        await state.clear()
+        return
 
     if not mailer_is_configured():
-        # Мейлер не настроен — пропускаем OTP. IAP-проверка прямо здесь.
-        info = await get_user_by_email(email)
-        if not info or not info.get('id'):
-            if menu_msg:
-                try:
-                    await menu_msg.edit_text(
-                        '<b>❌ Email не найден на платформе</b>\n\n'
-                        'Введите другой email или сначала пройдите регистрацию.'
-                    )
-                except TelegramAPIError:
-                    pass
-            return
-        if info.get('status') is not None and info.get('status') != 1:
-            if menu_msg:
-                try:
-                    await menu_msg.edit_text('<b>🚫 Аккаунт заблокирован</b>')
-                except TelegramAPIError:
-                    pass
-            await state.clear()
-            return
         await state.update_data(event_v2_email=email)
         await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
         return
@@ -333,29 +331,6 @@ async def process_event_otp(message: Message, state: FSMContext):
                 )
             except TelegramAPIError:
                 pass
-        return
-
-    # OTP корректен → теперь проверяем существование/статус email в IAP
-    info = await get_user_by_email(email)
-    if not info or not info.get('id'):
-        if menu_msg:
-            try:
-                await menu_msg.edit_text(
-                    '<b>❌ Email не найден на платформе</b>\n\n'
-                    'Введите другой email или сначала пройдите регистрацию.',
-                    reply_markup=_otp_keyboard(can_resend=False),  # только «Изменить email»
-                )
-            except TelegramAPIError:
-                pass
-        # Возвращаем в state ожидания email (через кнопку «Изменить email»)
-        return
-    if info.get('status') is not None and info.get('status') != 1:
-        if menu_msg:
-            try:
-                await menu_msg.edit_text('<b>🚫 Аккаунт заблокирован</b>')
-            except TelegramAPIError:
-                pass
-        await state.clear()
         return
 
     await _after_email_confirmed(message.from_user.id, email, menu_msg, state)
