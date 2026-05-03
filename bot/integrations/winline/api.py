@@ -150,8 +150,8 @@ async def _resolve_org_fields(safe_email: str) -> None:
 _USER_DUMPED_ONCE = False
 
 
-async def get_user_by_email(email: str) -> Optional[dict]:
-    """Fetch user profile by email. Returns dict or None."""
+async def _get_user_by_email_api(email: str) -> Optional[dict]:
+    """Fetch user profile by email via live IAP GraphQL. Returns dict or None."""
     global _USER_DUMPED_ONCE
     safe = email.replace('"', '')
     await _resolve_org_fields(safe)
@@ -170,7 +170,7 @@ async def get_user_by_email(email: str) -> Optional[dict]:
     return user
 
 
-async def get_user_websites(user_id: int, user_email: str | None = None) -> list[dict]:
+async def _get_user_websites_api(user_id: int, user_email: str | None = None) -> list[dict]:
     """Fetch all websites belonging to a given user.
 
     Primary path: filter by userId. If the GraphQL schema doesn't accept that
@@ -272,7 +272,7 @@ def get_period_range(period: str) -> tuple[str, str, str]:
     return _iso_msk(start_dt), _iso_msk(end_dt), label
 
 
-async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
+async def _get_user_stats_api(user_id: int, start: str, end: str) -> Optional[dict]:
     """Fetch aggregated stats for a user between start/end (ISO strings w/ tz).
 
     Returns a dict with summed metrics or None on error:
@@ -317,3 +317,76 @@ async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
             except (TypeError, ValueError):
                 pass
     return totals
+
+
+# ── Data-source dispatch (api ↔ S3 dumps) ─────────────────────────────────
+
+WL_DATA_SOURCE = (os.getenv('WL_DATA_SOURCE', 'api') or 'api').strip().lower()
+
+
+def _use_dumps() -> bool:
+    if WL_DATA_SOURCE != 's3':
+        return False
+    try:
+        from . import dumps  # noqa: F401
+        return dumps.is_configured()
+    except Exception as e:
+        logger.warning(f'[WL] dumps import failed, falling back to api: {e}')
+        return False
+
+
+async def get_user_by_email(email: str) -> Optional[dict]:
+    """Public entrypoint. Returns user profile dict or None.
+
+    Switches between live API and S3 dumps based on WL_DATA_SOURCE env.
+    On S3 miss, falls back to API so freshly-registered users are not stranded.
+    """
+    if _use_dumps():
+        from . import dumps
+        try:
+            user = await dumps.get_user_by_email(email)
+        except Exception as e:
+            logger.warning(f'[WL] dumps.get_user_by_email failed: {e}')
+            user = None
+        if user:
+            return user
+        logger.info(f'[WL] dumps miss for email={email}, falling back to api')
+    return await _get_user_by_email_api(email)
+
+
+async def get_user_websites(user_id: int, user_email: str | None = None) -> list[dict]:
+    if _use_dumps():
+        from . import dumps
+        try:
+            sites = await dumps.get_user_websites(user_id)
+        except Exception as e:
+            logger.warning(f'[WL] dumps.get_user_websites failed: {e}')
+            sites = []
+        if sites:
+            return sites
+        logger.info(f'[WL] dumps miss for websites user_id={user_id}, falling back to api')
+    return await _get_user_websites_api(user_id, user_email)
+
+
+async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
+    """Aggregated metrics for the period. In s3 mode reads 6 metrics from
+    dumps and pulls clicks from API (clicks are not present in the dump).
+    """
+    if _use_dumps():
+        from . import dumps
+        try:
+            totals = await dumps.get_user_stats(user_id, start, end)
+        except Exception as e:
+            logger.warning(f'[WL] dumps.get_user_stats failed: {e}')
+            totals = None
+        if totals is not None:
+            # Pull clicks from API and patch in.
+            try:
+                api_totals = await _get_user_stats_api(user_id, start, end)
+                if api_totals:
+                    totals['clicks'] = int(api_totals.get('clicks') or 0)
+            except Exception as e:
+                logger.warning(f'[WL] clicks fallback fetch failed: {e}')
+            return totals
+        logger.info(f'[WL] dumps miss for stats user_id={user_id}, falling back to api')
+    return await _get_user_stats_api(user_id, start, end)
