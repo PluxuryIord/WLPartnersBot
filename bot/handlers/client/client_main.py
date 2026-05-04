@@ -1176,6 +1176,27 @@ async def pm_kb_back(call: CallbackQuery):
 
 
 
+async def pm_calendar(call: CallbackQuery):
+    """Show event calendar screen in PM (mirrors group_calendar)."""
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        ...
+    from bot.utils.dynamic_kb import get_screen_kb
+    calendar_kb = get_screen_kb('group_calendar') or kb_client_group.create_inline([
+        ['Открыть календарь', 'url', 'https://docs.google.com/spreadsheets/d/1zMg4sJlUUD2I-SPEUc7MRC6rRkbZHWpBju0vGlzNeIo/edit?gid=0#gid=0'],
+        ['🔙 Меню', 'call', 'client_back_menu'],
+    ], 1)
+    new_menu = await send_screen_message(
+        bot, call.from_user.id, 'group_calendar',
+        message_key='main_text',
+        text=get_text('group_calendar', 'main_text')
+             or '<b>📅 Календарь</b>\n\nПерейдите по ссылке для просмотра актуального календаря.',
+        reply_markup=calendar_kb)
+    DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
+    await call.answer()
+
+
 async def pm_socials(call: CallbackQuery):
     """Show social networks in PM."""
     try:
@@ -2318,6 +2339,7 @@ def register_handlers_client_main(dp: Dispatcher):
     dp.callback_query.register(pm_stats_period, F.data.startswith('client_stats_period:'))
     dp.callback_query.register(pm_offers, F.data == 'client_offers')
     dp.callback_query.register(pm_socials, F.data == 'client_socials')
+    dp.callback_query.register(pm_calendar, F.data == 'client_calendar')
     dp.callback_query.register(pm_promo, F.data == 'client_promo')
     # старый at_event заменён на event_v2_start (см. register выше)
     dp.callback_query.register(logout, F.data == 'client_logout')

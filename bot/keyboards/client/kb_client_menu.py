@@ -84,11 +84,12 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
     extra = [['📊 Моя статистика', 'call', 'client_my_stats']]
     if show_ai:
         extra.append(['❓ Спросить ИИ', 'call', 'client_ask_ai'])
+    extra.append(['📅 Календарь мероприятия', 'call', 'client_calendar'])
     if is_admin:
         extra.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
 
-    # Try dynamic KB first
-    skip_actions = [] if event_active else ['client_at_event']
+    # «Я на мероприятии» убран — вход в S3 только по QR на стенде.
+    skip_actions = ['client_at_event']
     kb = get_screen_kb_filtered('main_menu', extra_buttons=extra, skip_actions=skip_actions)
     if kb:
         return kb
@@ -105,10 +106,9 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
         ['Актуальные крео и лендинги', 'call', 'client_promo'],
         ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
         ['Наши соц. сети', 'call', 'client_socials'],
+        ['📅 Календарь мероприятия', 'call', 'client_calendar'],
+        ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
     ])
-    if event_active:
-        fallback.append(['Я на мероприятии!', 'call', 'client_at_event'])
-    fallback.append(['🚪 Выйти из аккаунта', 'call', 'client_logout'])
     if is_admin:
         fallback.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
     return create_inline(fallback, 1)
@@ -120,7 +120,7 @@ authorized_menu = create_inline([
     ['Актуальные крео и лендинги', 'call', 'client_promo'],
     ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
     ['Наши соц. сети', 'call', 'client_socials'],
-    ['Я на мероприятии!', 'call', 'client_at_event'],
+    ['📅 Календарь мероприятия', 'call', 'client_calendar'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
 authorized_menu_admin = create_inline([
@@ -130,7 +130,7 @@ authorized_menu_admin = create_inline([
     ['Актуальные крео и лендинги', 'call', 'client_promo'],
     ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
     ['Наши соц. сети', 'call', 'client_socials'],
-    ['Я на мероприятии!', 'call', 'client_at_event'],
+    ['📅 Календарь мероприятия', 'call', 'client_calendar'],
     ['⚙️ Меню администратора', 'call', 'admin_menu'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
