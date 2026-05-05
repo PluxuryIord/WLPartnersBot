@@ -1177,16 +1177,32 @@ async def pm_kb_back(call: CallbackQuery):
 
 
 async def pm_calendar(call: CallbackQuery):
-    """Show event calendar screen in PM (mirrors group_calendar)."""
+    """Show event calendar in PM. Reuses the text from group_calendar scenario,
+    but replaces back-to-group navigation with PM back."""
     try:
         await call.message.delete()
     except TelegramAPIError:
         ...
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     from bot.utils.dynamic_kb import get_screen_kb
-    calendar_kb = get_screen_kb('group_calendar') or kb_client_group.create_inline([
-        ['Открыть календарь', 'url', 'https://docs.google.com/spreadsheets/d/1zMg4sJlUUD2I-SPEUc7MRC6rRkbZHWpBju0vGlzNeIo/edit?gid=0#gid=0'],
-        ['🔙 Меню', 'call', 'client_back_menu'],
-    ], 1)
+
+    # Take only URL buttons from group_calendar scenario; drop any group-callback
+    # buttons (like "🔙 Меню → group_main_menu") and add our PM back instead.
+    pm_rows = []
+    src_kb = get_screen_kb('group_calendar')
+    if src_kb is not None:
+        for row in (src_kb.inline_keyboard or []):
+            keep = [btn for btn in row if btn.url]
+            if keep:
+                pm_rows.append(keep)
+    if not pm_rows:
+        pm_rows.append([InlineKeyboardButton(
+            text='Открыть календарь',
+            url='https://docs.google.com/spreadsheets/d/1zMg4sJlUUD2I-SPEUc7MRC6rRkbZHWpBju0vGlzNeIo/edit?gid=0#gid=0',
+        )])
+    pm_rows.append([InlineKeyboardButton(text='🔙 Меню', callback_data='client_back_menu')])
+    calendar_kb = InlineKeyboardMarkup(inline_keyboard=pm_rows)
+
     new_menu = await send_screen_message(
         bot, call.from_user.id, 'group_calendar',
         message_key='main_text',

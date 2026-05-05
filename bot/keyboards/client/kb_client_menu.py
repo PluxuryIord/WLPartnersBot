@@ -84,7 +84,7 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
     extra = [['📊 Моя статистика', 'call', 'client_my_stats']]
     if show_ai:
         extra.append(['❓ Спросить ИИ', 'call', 'client_ask_ai'])
-    extra.append(['📅 Календарь мероприятия', 'call', 'client_calendar'])
+    extra.append(['📅 Календарь мероприятий', 'call', 'client_calendar'])
     if is_admin:
         extra.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
 
@@ -106,7 +106,7 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
         ['Актуальные крео и лендинги', 'call', 'client_promo'],
         ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
         ['Наши соц. сети', 'call', 'client_socials'],
-        ['📅 Календарь мероприятия', 'call', 'client_calendar'],
+        ['📅 Календарь мероприятий', 'call', 'client_calendar'],
         ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
     ])
     if is_admin:
@@ -120,7 +120,7 @@ authorized_menu = create_inline([
     ['Актуальные крео и лендинги', 'call', 'client_promo'],
     ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
     ['Наши соц. сети', 'call', 'client_socials'],
-    ['📅 Календарь мероприятия', 'call', 'client_calendar'],
+    ['📅 Календарь мероприятий', 'call', 'client_calendar'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
 authorized_menu_admin = create_inline([
@@ -130,7 +130,7 @@ authorized_menu_admin = create_inline([
     ['Актуальные крео и лендинги', 'call', 'client_promo'],
     ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
     ['Наши соц. сети', 'call', 'client_socials'],
-    ['📅 Календарь мероприятия', 'call', 'client_calendar'],
+    ['📅 Календарь мероприятий', 'call', 'client_calendar'],
     ['⚙️ Меню администратора', 'call', 'admin_menu'],
     ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
 ], 1)
