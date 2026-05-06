@@ -81,16 +81,15 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
 
     show_ai = user_id is not None and is_user_allowed(user_id)
 
-    extra = [['📊 Моя статистика', 'call', 'client_my_stats']]
-    if show_ai:
-        extra.append(['❓ Спросить ИИ', 'call', 'client_ask_ai'])
-    extra.append(['📅 Календарь мероприятий', 'call', 'client_calendar'])
-    if is_admin:
-        extra.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
-
-    # «Я на мероприятии» убран — вход в S3 только по QR на стенде.
+    # Все кнопки теперь живут в сценариях (main_menu) — админ может их
+    # переименовывать/переупорядочивать. Здесь скрываем условные:
     skip_actions = ['client_at_event']
-    kb = get_screen_kb_filtered('main_menu', extra_buttons=extra, skip_actions=skip_actions)
+    if not show_ai:
+        skip_actions.append('client_ask_ai')
+    if not is_admin:
+        skip_actions.append('admin_menu')
+
+    kb = get_screen_kb_filtered('main_menu', skip_actions=skip_actions)
     if kb:
         return kb
 
