@@ -2361,7 +2361,11 @@ def register_handlers_client_main(dp: Dispatcher):
     # Сценарий 3 v2 — должен регистрироваться ДО старого at_event, иначе old wins
     from bot.handlers.client import client_event_v2 as _ev2
     _ev2.register(dp)
-    dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
+    # Старый start_event (мерч-QR сразу авторизованным) отключён — deep-link
+    # `/start event` теперь полностью обрабатывается start_command, который
+    # ведёт в S3 v2 (event_partner_check). Сам хендлер оставлен в файле на
+    # случай отката.
+    # dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
     dp.message.register(start_command, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(poll_vote_handler, F.data.startswith('poll_vote:'))
     dp.callback_query.register(dynamic_screen_handler, F.data.startswith('sc_'))
