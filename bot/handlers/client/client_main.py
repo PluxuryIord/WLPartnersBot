@@ -76,6 +76,11 @@ input_data = {
 IAP_API_URL = os.getenv('IAP_API_URL', 'https://p.winline.ru/api/graphql')
 IAP_TOKEN = os.getenv('IAP_ADMIN_TOKEN', '')
 
+# Deep-link payload, ведущий в S3 (event flow). Зашивается в QR на стенде:
+#   t.me/<bot_username>?start=<EVENT_DEEPLINK_TOKEN>
+# По умолчанию 'event'. Можно поменять через .env, чтобы старые QR перестали работать.
+EVENT_DEEPLINK_TOKEN = os.getenv('EVENT_DEEPLINK_TOKEN', 'event')
+
 
 async def check_email_in_iap(email: str) -> dict:
     """Check if email exists in IAP platform.
@@ -118,16 +123,14 @@ async def main_menu(update: Union[Message, CallbackQuery],
         if config.admin_filter.is_system(user.id):
             config.admin_filter.add_admin(user.id, 0, admin_access.full_admin_access)
         is_admin = config.admin_filter.is_admin(user.id)
-        if get_settings_cached().event_starts:
-            kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
-            caption_text = get_text('event_flow', 'welcome') or '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
-        else:
-            kb = kb_client_menu.get_start_menu(is_admin)
-            caption_text = get_text('start_menu', 'welcome', name=update.from_user.first_name) or (
-                f'<b>Привет, {update.from_user.first_name}! '
-                'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-                'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+        # Авто-редирект в S3 убран. В S3 попадают ТОЛЬКО юзеры пришедшие по
+        # deep-link (t.me/<bot>?start=event), это обрабатывается в start_command.
+        kb = kb_client_menu.get_start_menu(is_admin)
+        caption_text = get_text('start_menu', 'welcome', name=update.from_user.first_name) or (
+            f'<b>Привет, {update.from_user.first_name}! '
+            'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
+            'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
+            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
         await wait_registration.delete()
         new_menu_id = await wait_registration.answer_photo(
             caption=caption_text,
@@ -160,17 +163,13 @@ async def main_menu(update: Union[Message, CallbackQuery],
                     photo='AgACAgIAAxkBAALAumm79aB6UEyMKSwO7Y4CIuK0V2GvAALrGWsbCkPgSa2z0SVvYvJsAQADAgADeQADOgQ',
                     reply_markup=kb)
             else:
-                # Not authorized → show start menu or event menu
-                if get_settings_cached().event_starts:
-                    kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
-                    caption_text = get_text('event_flow', 'welcome') or '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
-                else:
-                    kb = kb_client_menu.get_start_menu(is_admin)
-                    caption_text = get_text('start_menu', 'welcome', name=user.first_name) or (
-                        f'<b>Привет, {user.first_name}! '
-                        'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-                        'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-                        'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+                # Not authorized → show start menu (event flow only via deep-link)
+                kb = kb_client_menu.get_start_menu(is_admin)
+                caption_text = get_text('start_menu', 'welcome', name=user.first_name) or (
+                    f'<b>Привет, {user.first_name}! '
+                    'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
+                    'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
+                    'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=caption_text,
@@ -180,6 +179,36 @@ async def main_menu(update: Union[Message, CallbackQuery],
         await telegram.delete_message(update)
     DB.User.update(mark=update.from_user.id, menu_id=new_menu_id.message_id)
     return new_menu_id
+
+
+async def start_command(message: Message, command: CommandObject, state: FSMContext, user_data=None):
+    """/start dispatcher.
+    Если команда пришла с deep-link payload-ом, совпадающим с EVENT_DEEPLINK_TOKEN,
+    юзер сразу попадает в S3 (event_partner_check). Все остальные — обычное меню.
+    """
+    args = (command.args or '').strip() if command else ''
+    if args == EVENT_DEEPLINK_TOKEN:
+        if not get_settings_cached().event_starts:
+            try:
+                await message.answer(
+                    get_text('event_flow', 'no_event') or 'Сейчас нет активных мероприятий.'
+                )
+            except Exception:
+                pass
+            return await main_menu(message, message.from_user, user_data, state)
+        # Гарантируем, что юзер заведён в БД (создаст запись + topic + покажет меню).
+        if not user_data:
+            await main_menu(message, message.from_user, user_data, state)
+            user_data = DB.User.select(message.from_user.id)
+        if state and await state.get_state():
+            await state.clear()
+        from bot.handlers.client.client_event_v2 import _show_screen
+        await _show_screen(
+            message.from_user.id, 'event_partner_check',
+            fallback='<b>Вы уже работаете с WINLINE PARTNERS?</b>',
+        )
+        return
+    return await main_menu(message, message.from_user, user_data, state)
 
 
 async def back_menu(call: CallbackQuery, state: FSMContext):
@@ -206,15 +235,11 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
             await call.message.delete()
         except TelegramAPIError:
             ...
-        if get_settings_cached().event_starts:
-            kb = kb_client_menu.event_menu_admin if is_admin else kb_client_menu.event_menu
-            caption_text = get_text('event_flow', 'welcome') or '<b>Приветственный текст для мероприятия\n\nЧтобы продолжить, пожалуйста, заполните небольшую анкету</b>'
-        else:
-            kb = kb_client_menu.get_start_menu(is_admin)
-            caption_text = get_text('start_menu', 'welcome') or (
-                '<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
-                'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
-                'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+        kb = kb_client_menu.get_start_menu(is_admin)
+        caption_text = get_text('start_menu', 'welcome') or (
+            '<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
+            'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
+            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
         new_menu = await bot.send_photo(
             chat_id=call.from_user.id,
             caption=caption_text,
@@ -2337,7 +2362,7 @@ def register_handlers_client_main(dp: Dispatcher):
     from bot.handlers.client import client_event_v2 as _ev2
     _ev2.register(dp)
     dp.message.register(start_event, _is_event_deeplink, F.chat.type == 'private')
-    dp.message.register(main_menu, Command(commands="start"), F.chat.type == 'private')
+    dp.message.register(start_command, Command(commands="start"), F.chat.type == 'private')
     dp.callback_query.register(poll_vote_handler, F.data.startswith('poll_vote:'))
     dp.callback_query.register(dynamic_screen_handler, F.data.startswith('sc_'))
     dp.callback_query.register(telegram.delete_message, F.data == 'client_delete_message')
