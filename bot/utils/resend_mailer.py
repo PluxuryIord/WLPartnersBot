@@ -52,6 +52,11 @@ def _provider() -> str:
 
 
 def is_configured() -> bool:
+    # Глобальный выключатель OTP-кодов в боте: BOT_OTP_DISABLED=1 → возвращаем
+    # «не сконфигурирован», вся существующая логика fallback пускает юзера
+    # дальше без ввода кода.
+    if (os.getenv('BOT_OTP_DISABLED', '') or '').strip().lower() in ('1', 'true', 'yes'):
+        return False
     p = _provider()
     if p == 'smtp':
         return bool(SMTP_HOST and SMTP_FROM)
