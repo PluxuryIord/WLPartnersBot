@@ -1815,8 +1815,32 @@ async def _anketa_finish(user_id: int, state: FSMContext):
 
     await state.clear()
     await _send_event_qr(user_id, is_partner=False)
-    # Промо регистрации показываем не здесь, а после факта выдачи мерча
-    # (хостес скнирует QR → panel scanHandler → admin_api /event/merch-given).
+    # И сразу отправляем промо регистрации (раффл мячей).
+    # Раньше оно слалось только после фактического сканирования QR хостесом
+    # на стенде, но юзеру нужно видеть оффер сразу, чтобы успеть поучаствовать.
+    await _send_event_registration_promo(user_id)
+
+
+async def _send_event_registration_promo(user_id: int):
+    """Отправляет экран event_registration_promo (раффл-промо)."""
+    from bot.utils.dynamic_kb import get_screen_kb
+    text = get_text('event_registration_promo', 'promo') or (
+        '<b>Хочешь выиграть 1 из 10 мячей, подписанным легендой '
+        'футбола и амбассадором WINLINE, Роналдиньо?</b>\n\n'
+        'Пройди регистрацию на сайте WINLINE PARTNERS'
+    )
+    kb = get_screen_kb('event_registration_promo')
+    try:
+        new_msg = await send_screen_message(
+            bot, user_id, 'event_registration_promo',
+            text=text, reply_markup=kb, message_key='promo',
+        )
+        try:
+            DB.User.update(mark=user_id, menu_id=new_msg.message_id)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f'[event_registration_promo] failed for {user_id}: {e}')
 
 
 async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMContext):
@@ -1827,6 +1851,7 @@ async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMC
     )
     if not questions:
         await _send_event_qr(user_id, is_partner=False)
+        await _send_event_registration_promo(user_id)
         return
 
     questions = sorted(questions, key=lambda q: q.order)
@@ -1899,6 +1924,7 @@ async def _anketa_next_or_finish_legacy(user_id: int, state: FSMContext):
 
         await state.clear()
         await _send_event_qr(user_id, is_partner=False)
+        await _send_event_registration_promo(user_id)
         return
 
     await state.update_data(anketa_index=index)
