@@ -181,14 +181,27 @@ async def event_v2_partner_yes(call: CallbackQuery, state: FSMContext):
 
 
 async def event_v2_partner_no(call: CallbackQuery, state: FSMContext):
-    """«Не работаю с WINLINE PARTNERS» → существующая анкета (anketa_role)."""
-    # Перенаправляем на стандартный анкета-флоу:
-    from bot.handlers.client.client_main import start_event_anketa_callback  # type: ignore
+    """«Не работаю с WINLINE PARTNERS» → анкета (anketa_role).
+
+    Идём в анкету ВСЕГДА, даже если юзер уже авторизован — он только что
+    явно сказал что он не партнёр, значит анкета релевантна. Старый
+    обёрточный start_event_anketa_callback в этом случае пропускал бы
+    анкету и сразу слал мерч-QR.
+    """
+    from bot.handlers.client.client_main import _start_event_anketa  # type: ignore
     try:
-        await start_event_anketa_callback(call, state)
+        await call.message.delete()
+    except TelegramAPIError:
+        pass
+    await call.answer()
+    try:
+        await _start_event_anketa(call.message, call.from_user.id, state)
     except Exception as e:
-        logger.error(f'[event_v2] redirect to anketa failed: {e}')
-        await call.answer('Ошибка, попробуйте ещё раз', show_alert=True)
+        logger.error(f'[event_v2] start_event_anketa failed: {e}')
+        try:
+            await bot.send_message(call.from_user.id, '⚠️ Не удалось запустить анкету, попробуйте ещё раз.')
+        except Exception:
+            pass
 
 
 async def event_v2_verify(call: CallbackQuery, state: FSMContext):
