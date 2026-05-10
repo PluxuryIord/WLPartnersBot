@@ -131,7 +131,21 @@ async def _show_congrats(user_id: int, ticket_label: str):
     )
     text = (get_text('event_congrats', 'text') or fallback).replace('№******', f'№{ticket_label}')
     text = text.replace('{ticket}', ticket_label)
-    await _show_screen(user_id, 'event_congrats', fallback=text, extra_text='', extra_kb=get_screen_kb('event_congrats'))
+
+    # Достаём клавиатуру из сценария и гарантируем что есть кнопка «Хочу мерч».
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    src_kb = get_screen_kb('event_congrats')
+    rows = []
+    if src_kb is not None and src_kb.inline_keyboard:
+        rows = [list(r) for r in src_kb.inline_keyboard]
+    has_merch_btn = any(
+        (btn.callback_data == 'event_v2_want_merch') for r in rows for btn in r
+    )
+    if not has_merch_btn:
+        rows.insert(0, [InlineKeyboardButton(text='🎁 Хочу мерч', callback_data='event_v2_want_merch')])
+    extra_kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    await _show_screen(user_id, 'event_congrats', fallback=text, extra_text='', extra_kb=extra_kb)
     # Override text rendered by _show_screen since it pulled raw template
     user_data = DB.User.select(user_id)
     if user_data and user_data.menu_id:
@@ -178,6 +192,28 @@ async def event_v2_partner_yes(call: CallbackQuery, state: FSMContext):
         message_key='promo',
     )
     await call.answer()
+
+
+async def event_v2_want_merch(call: CallbackQuery, state: FSMContext):
+    """«🎁 Хочу мерч» на экране event_congrats у уже-партнёра с раффл-билетом.
+    Запускает обычную анкету. Флаг skip_raffle_promo гарантирует, что в конце
+    анкеты бот выдаст мерч-QR, но НЕ пришлёт второй раз раффл-промо."""
+    from bot.handlers.client.client_main import _start_event_anketa  # type: ignore
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        pass
+    await call.answer()
+    try:
+        await _start_event_anketa(call.message, call.from_user.id, state)
+        # state уже выставлен в _start_event_anketa, дополняем флагом
+        await state.update_data(skip_raffle_promo=True)
+    except Exception as e:
+        logger.error(f'[event_v2] want_merch → anketa failed: {e}')
+        try:
+            await bot.send_message(call.from_user.id, '⚠️ Не удалось запустить анкету, попробуйте ещё раз.')
+        except Exception:
+            pass
 
 
 async def event_v2_partner_no(call: CallbackQuery, state: FSMContext):
@@ -547,6 +583,7 @@ def register(dp):
     dp.callback_query.register(event_v2_start,                F.data == 'client_at_event')
     dp.callback_query.register(event_v2_partner_yes,          F.data == 'event_v2_partner_yes')
     dp.callback_query.register(event_v2_partner_no,           F.data == 'event_v2_partner_no')
+    dp.callback_query.register(event_v2_want_merch,           F.data == 'event_v2_want_merch')
     dp.callback_query.register(event_v2_verify,               F.data == 'event_v2_verify')
     dp.callback_query.register(event_v2_back,                 F.data == 'event_v2_back')
     dp.callback_query.register(event_v2_registered,           F.data == 'event_v2_registered')

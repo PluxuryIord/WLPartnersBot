@@ -1813,12 +1813,18 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     except Exception as e:
         logger.error(f'[anketa-flow] Ошибка отправки в Google Sheets: {e}')
 
+    # Сохраняем флаг до очистки state — он мог быть выставлен при входе
+    # в анкету через event_v2_want_merch (партнёр уже получил раффл-билет
+    # и пришёл за мерчем, второй раз про раффл писать не нужно).
+    flow_data = await state.get_data()
+    skip_promo = bool(flow_data.get('skip_raffle_promo'))
     await state.clear()
     await _send_event_qr(user_id, is_partner=False)
-    # И сразу отправляем промо регистрации (раффл мячей).
-    # Раньше оно слалось только после фактического сканирования QR хостесом
-    # на стенде, но юзеру нужно видеть оффер сразу, чтобы успеть поучаствовать.
-    await _send_event_registration_promo(user_id)
+    if not skip_promo:
+        # И сразу отправляем промо регистрации (раффл мячей).
+        # Раньше оно слалось только после фактического сканирования QR хостесом
+        # на стенде, но юзеру нужно видеть оффер сразу, чтобы успеть поучаствовать.
+        await _send_event_registration_promo(user_id)
 
 
 async def _send_event_registration_promo(user_id: int):
@@ -1922,9 +1928,12 @@ async def _anketa_next_or_finish_legacy(user_id: int, state: FSMContext):
         except Exception as e:
             print(f'[anketa] Ошибка отправки в Google Sheets: {e}')
 
+        flow_data = await state.get_data()
+        skip_promo = bool(flow_data.get('skip_raffle_promo'))
         await state.clear()
         await _send_event_qr(user_id, is_partner=False)
-        await _send_event_registration_promo(user_id)
+        if not skip_promo:
+            await _send_event_registration_promo(user_id)
         return
 
     await state.update_data(anketa_index=index)
