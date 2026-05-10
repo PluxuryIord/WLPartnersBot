@@ -146,17 +146,23 @@ async def _show_congrats(user_id: int, ticket_label: str):
     extra_kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
     await _show_screen(user_id, 'event_congrats', fallback=text, extra_text='', extra_kb=extra_kb)
-    # Override text rendered by _show_screen since it pulled raw template
+    # Override text rendered by _show_screen since it pulled raw template.
+    # ВАЖНО: явно прокидываем reply_markup, иначе edit_message_* затирает кнопки.
     user_data = DB.User.select(user_id)
     if user_data and user_data.menu_id:
         try:
             from bot.utils.scenario_texts import get_media
             media = get_media('event_congrats', 'text')
             if media and media.get('url'):
-                # replace caption
-                await bot.edit_message_caption(chat_id=user_id, message_id=user_data.menu_id, caption=text)
+                await bot.edit_message_caption(
+                    chat_id=user_id, message_id=user_data.menu_id,
+                    caption=text, reply_markup=extra_kb,
+                )
             else:
-                await bot.edit_message_text(text, chat_id=user_id, message_id=user_data.menu_id)
+                await bot.edit_message_text(
+                    text, chat_id=user_id, message_id=user_data.menu_id,
+                    reply_markup=extra_kb,
+                )
         except TelegramAPIError:
             pass
 
