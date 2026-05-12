@@ -125,29 +125,17 @@ def _read_blocking(name: str, full_refresh: bool):
     df = pd.concat(frames, ignore_index=True)
 
     # Post-process conversions: extract partner email into a flat column so
-    # filtering by partner becomes vectorized (5.5M Python applies → 0).
+    # filtering by partner becomes a vectorized string compare. In wldp-admon
+    # the `users` column is serialized as a JSON STRING like
+    # '[{"email": "x@y.z"}]' (not a list of structs), so regex extract is both
+    # correct and fast for millions of rows.
     if name == 'conversions' and 'users' in df.columns:
-        df['_partner_email'] = df['users'].map(_first_email).astype('string').str.lower()
+        df['_partner_email'] = (
+            df['users'].astype('string')
+            .str.extract(r'"email"\s*:\s*"([^"]+)"', expand=False)
+            .str.lower()
+        )
     return df
-
-
-def _first_email(lst) -> Optional[str]:
-    """Best-effort: pull the first user's email from a conversions.users cell.
-
-    The cell is normally a Python list of dicts like [{'email': '...'}], but
-    parquet decoding can occasionally yield None / numpy arrays / strings.
-    """
-    if lst is None:
-        return None
-    try:
-        for u in lst:
-            if isinstance(u, dict):
-                e = u.get('email')
-                if e:
-                    return str(e)
-    except TypeError:
-        return None
-    return None
 
 
 # Columns to materialize per object. Conversions is the big one — we only need
