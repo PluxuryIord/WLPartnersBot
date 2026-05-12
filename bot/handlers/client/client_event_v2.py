@@ -263,11 +263,19 @@ async def event_v2_verify(call: CallbackQuery, state: FSMContext):
 
 
 async def event_v2_back(call: CallbackQuery, state: FSMContext):
-    """«Вернуться назад» из верификации → стартовое меню."""
+    """«Вернуться назад» из верификации → стартовое меню.
+
+    back_to_start takes only `call` (no state arg) — passing state used to
+    raise TypeError, which the outer except silently swallowed and made the
+    button look broken.
+    """
+    if state and await state.get_state():
+        await state.clear()
     from bot.handlers.client.client_main import back_to_start
     try:
-        await back_to_start(call, state)
-    except Exception:
+        await back_to_start(call)
+    except Exception as e:
+        logger.warning(f'[event_v2] back_to_start failed: {e}')
         await call.answer()
 
 
