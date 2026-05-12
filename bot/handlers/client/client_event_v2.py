@@ -123,7 +123,7 @@ async def _issue_raffle_ticket(user_id: int, email: str, event_id: int = 0, tick
         return {}
 
 
-async def _show_congrats(user_id: int, ticket_label: str, show_merch_button: bool = False):
+async def _show_congrats(user_id: int, ticket_label: str):
     fallback = (
         f'<b>🎉 Поздравляем! Ты стал участником розыгрыша.\n\n'
         f'Твой номер: №{ticket_label}\n\n'
@@ -132,31 +132,36 @@ async def _show_congrats(user_id: int, ticket_label: str, show_merch_button: boo
     text = (get_text('event_congrats', 'text') or fallback).replace('№******', f'№{ticket_label}')
     text = text.replace('{ticket}', ticket_label)
 
-    # Клавиатура зависит только от того, какой это флоу:
-    #  • «Работаю с WL» (show_merch_button=True)  → кнопка «🎁 Хочу мерч»
-    #    обязательна — это единственный способ дальше попасть в анкету
-    #    и получить мерч-QR.
-    #  • «Не работаю» (show_merch_button=False)  → мерч-QR уже выдан в
-    #    конце анкеты, на этом экране флоу заканчивается, кнопки нет.
+    # Достаём клавиатуру из сценария. Кнопка «Хочу мерч» имеет смысл только
+    # для уже-партнёра, который мерч ещё не получал — для «не работаю»-флоу
+    # мерч-QR выдаётся в конце анкеты до показа этого экрана, повторная
+    # кнопка приведёт к выдаче второго QR.
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from bot.handlers.client.client_main import get_user_merch_code
+    already_has_merch = False
+    try:
+        already_has_merch = bool(await get_user_merch_code(user_id))
+    except Exception as e:
+        logger.warning(f'[event_v2] merch-code check failed: {e}')
+
     src_kb = get_screen_kb('event_congrats')
     rows = []
     if src_kb is not None and src_kb.inline_keyboard:
         rows = [list(r) for r in src_kb.inline_keyboard]
 
-    if show_merch_button:
-        has_merch_btn = any(
-            (btn.callback_data == 'event_v2_want_merch') for r in rows for btn in r
-        )
-        if not has_merch_btn:
-            rows.insert(0, [InlineKeyboardButton(text='🎁 Хочу мерч', callback_data='event_v2_want_merch')])
-    else:
+    if already_has_merch:
         # Drop any «Хочу мерч» button(s) that the scenario kb may carry.
         rows = [
             [b for b in r if b.callback_data != 'event_v2_want_merch']
             for r in rows
         ]
         rows = [r for r in rows if r]  # purge rows that became empty
+    else:
+        has_merch_btn = any(
+            (btn.callback_data == 'event_v2_want_merch') for r in rows for btn in r
+        )
+        if not has_merch_btn:
+            rows.insert(0, [InlineKeyboardButton(text='🎁 Хочу мерч', callback_data='event_v2_want_merch')])
 
     extra_kb = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
@@ -203,11 +208,6 @@ async def event_v2_partner_yes(call: CallbackQuery, state: FSMContext):
     """«Работаю с WINLINE PARTNERS» → промо верификации."""
     if state and await state.get_state():
         await state.clear()
-    # Mark the flow as "partner" so the final congrats screen knows to keep
-    # the «🎁 Хочу мерч» button (these users have NOT been through anketa yet
-    # and need a way to claim merch). For «Не работаю» the flow goes through
-    # _anketa_finish which clears state, so this flag never reaches congrats.
-    await state.update_data(event_v2_flow='partner')
     try:
         await call.message.delete()
     except TelegramAPIError:
@@ -554,10 +554,6 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
         # predictable to a few seconds and known user_id.
         import secrets as _secrets_mod
         suffix = _secrets_mod.token_hex(4).upper()
-    # Capture flow flag BEFORE we clear state — it tells _show_congrats whether
-    # to keep the «🎁 Хочу мерч» button on the final screen.
-    flow_data = await state.get_data()
-    is_partner_flow = (flow_data.get('event_v2_flow') == 'partner')
     resp = await _issue_raffle_ticket(user_id, email, event_id=0, ticket_code=suffix)
     await state.clear()
     if not resp:
@@ -567,7 +563,7 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
         await bot.send_message(user_id, get_text('event_congrats', 'disabled') or '<b>✅ Спасибо за участие!</b>')
         return
     label = resp.get('ticket_code') or (f"{resp.get('ticket_number', 0):06d}" if resp.get('ticket_number') is not None else '------')
-    await _show_congrats(user_id, label, show_merch_button=is_partner_flow)
+    await _show_congrats(user_id, label)
 
 
 # ─── Registration push (для «Не работаю» после анкеты) ──────────────────────
