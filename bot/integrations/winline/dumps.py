@@ -101,15 +101,60 @@ def _read_blocking(name: str, full_refresh: bool):
         latest_key = max(partitions.keys())
         keys = partitions[latest_key]
 
+    # Limit columns for big event tables to keep memory + parse time sane.
+    # `items` (per-conversion JSON) and other heavy fields are not used by the
+    # bot anywhere — skipping them shrinks the DataFrame ~10x.
+    column_subset = _COLUMN_SUBSETS.get(name)
+
     frames = []
     for k in keys:
         body = s3.get_object(Bucket=BUCKET, Key=k)['Body'].read()
         buf = io.BytesIO(body)
-        frames.append(pq.read_table(buf).to_pandas())
+        if column_subset:
+            try:
+                table = pq.read_table(buf, columns=column_subset)
+            except Exception:
+                # Schema changed / column missing — fall back to full read once.
+                buf.seek(0)
+                table = pq.read_table(buf)
+        else:
+            table = pq.read_table(buf)
+        frames.append(table.to_pandas())
     if not frames:
         return None
     df = pd.concat(frames, ignore_index=True)
+
+    # Post-process conversions: extract partner email into a flat column so
+    # filtering by partner becomes vectorized (5.5M Python applies → 0).
+    if name == 'conversions' and 'users' in df.columns:
+        df['_partner_email'] = df['users'].map(_first_email).astype('string').str.lower()
     return df
+
+
+def _first_email(lst) -> Optional[str]:
+    """Best-effort: pull the first user's email from a conversions.users cell.
+
+    The cell is normally a Python list of dicts like [{'email': '...'}], but
+    parquet decoding can occasionally yield None / numpy arrays / strings.
+    """
+    if lst is None:
+        return None
+    try:
+        for u in lst:
+            if isinstance(u, dict):
+                e = u.get('email')
+                if e:
+                    return str(e)
+    except TypeError:
+        return None
+    return None
+
+
+# Columns to materialize per object. Conversions is the big one — we only need
+# enough for per-partner stat aggregation. Everything else stays "all columns".
+_COLUMN_SUBSETS = {
+    'conversions': ['id', 'date', 'goal', 'status', 'reward', 'users'],
+}
 
 
 # Composite keys for incremental merge — last-write-wins per object.
@@ -222,21 +267,24 @@ async def _stats_from_conversions(email: str, start_d, end_d) -> tuple[dict, set
     if sub.empty:
         return out, covered
 
-    # Email lives inside users: [{email: ...}, ...]. Filter via vectorized apply.
+    # Vectorized email filter via the precomputed `_partner_email` column
+    # (set up in _read_blocking at conversions load time).
     em = email.strip().lower()
-
-    def _matches(lst):
-        try:
-            for u in (lst or []):
-                if isinstance(u, dict):
-                    e = u.get('email')
-                    if e and str(e).strip().lower() == em:
-                        return True
-        except Exception:
+    if '_partner_email' in sub.columns:
+        sub = sub[sub['_partner_email'] == em]
+    else:
+        # Defensive fallback if the load-time post-processing was skipped.
+        def _matches(lst):
+            try:
+                for u in (lst or []):
+                    if isinstance(u, dict):
+                        e = u.get('email')
+                        if e and str(e).strip().lower() == em:
+                            return True
+            except Exception:
+                return False
             return False
-        return False
-
-    sub = sub[sub['users'].apply(_matches)]
+        sub = sub[sub['users'].apply(_matches)]
     if sub.empty:
         return out, covered
 
