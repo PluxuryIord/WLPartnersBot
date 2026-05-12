@@ -115,6 +115,16 @@ def _read_blocking(name: str, full_refresh: bool):
 # Composite keys for incremental merge — last-write-wins per object.
 _MERGE_KEYS = {
     'stats_group_by': ['linkId', 'websiteId', 'userId', 'offerId', 'datetz', 'category', 'offerTag'],
+    'conversions': ['id'],
+}
+
+# Mapping of conversions.status -> reward bucket. ASSUMPTION pending supplier
+# confirmation: 1=created/in-processing, 2=confirmed, 3=canceled.
+# If the supplier replies otherwise, flip the mapping here.
+_STATUS_TO_BUCKET = {
+    1: 'rewardCreated',
+    2: 'rewardConfirmed',
+    3: 'rewardCanceled',
 }
 
 
@@ -177,16 +187,93 @@ async def get_user_websites(user_id: int) -> list[dict]:
     return out
 
 
+async def _user_id_to_email(user_id: int) -> Optional[str]:
+    """Resolve partner email by user_id via the users dump (small full table)."""
+    df = await _get('users')
+    if df is None or df.empty:
+        return None
+    row = df[df['id'] == int(user_id)]
+    if row.empty:
+        return None
+    em = row.iloc[0].get('email')
+    return (em or '').strip().lower() or None
+
+
+async def _stats_from_conversions(email: str, start_d, end_d) -> tuple[dict, set]:
+    """Aggregate goals + rewards (bucketed by status) from conversions for a
+    partner's email between two dates (inclusive).
+
+    Returns (totals_dict, set_of_dates_covered). totals_dict has keys
+    matching the stats_group_by output: goal11/12/13 quantities and three
+    reward buckets. covered_dates is the set of YYYY-MM-DD strings for which
+    conversions had ANY row for this partner — used by the caller to avoid
+    double-counting against stats_group_by.
+    """
+    out = {'goal11Quantity': 0, 'goal12Quantity': 0, 'goal13Quantity': 0,
+           'rewardConfirmed': 0, 'rewardCreated': 0, 'rewardCanceled': 0}
+    covered: set[str] = set()
+    df = await _get('conversions')
+    if df is None or df.empty:
+        return out, covered
+
+    # Date filter (date column is 'YYYY-MM-DD' string in the dump).
+    start_s, end_s = start_d.isoformat(), end_d.isoformat()
+    sub = df[(df['date'] >= start_s) & (df['date'] <= end_s)]
+    if sub.empty:
+        return out, covered
+
+    # Email lives inside users: [{email: ...}, ...]. Filter via vectorized apply.
+    em = email.strip().lower()
+
+    def _matches(lst):
+        try:
+            for u in (lst or []):
+                if isinstance(u, dict):
+                    e = u.get('email')
+                    if e and str(e).strip().lower() == em:
+                        return True
+        except Exception:
+            return False
+        return False
+
+    sub = sub[sub['users'].apply(_matches)]
+    if sub.empty:
+        return out, covered
+
+    # Quantities by goal.
+    goal_counts = sub.groupby('goal').size().to_dict()
+    out['goal11Quantity'] = int(goal_counts.get('goal11', 0))
+    out['goal12Quantity'] = int(goal_counts.get('goal12', 0))
+    out['goal13Quantity'] = int(goal_counts.get('goal13', 0))
+
+    # Rewards bucketed by status.
+    for status_val, bucket in _STATUS_TO_BUCKET.items():
+        rows = sub[sub['status'] == status_val]
+        if rows.empty:
+            continue
+        try:
+            out[bucket] = int(rows['reward'].fillna(0).sum())
+        except (TypeError, ValueError):
+            out[bucket] = 0
+
+    covered = set(sub['date'].astype(str).unique())
+    return out, covered
+
+
 async def get_user_stats(user_id: int, start_iso: str, end_iso: str) -> Optional[dict]:
     """Return totals for the 6 metrics available in the dump.
 
-    NOTE: clicks are NOT in the dump — caller must obtain them from the live API
-    and merge into the result if needed.
+    Strategy:
+      1. Aggregate REG/DEP/DEP2 + reward buckets from `conversions/` for the
+         partner (matched by email). Conversions is fresh (hourly) and is the
+         only place where deposits live after the 2026-05-05 stats_group_by
+         format change.
+      2. For dates NOT covered by conversions, fall back to `stats_group_by`
+         (which still has reg-only data for older periods, including the
+         pre-2026-05-05 fat snapshot with full history).
+      3. Clicks are not in either dump — caller backfills from live API.
     """
     if not is_configured():
-        return None
-    df = await _get('stats_group_by')
-    if df is None or df.empty:
         return None
 
     try:
@@ -195,22 +282,39 @@ async def get_user_stats(user_id: int, start_iso: str, end_iso: str) -> Optional
     except Exception:
         return None
 
-    sub = df[
-        (df['userId'] == int(user_id))
-        & (df['datetz'] >= start_d.isoformat())
-        & (df['datetz'] <= end_d.isoformat())
-    ]
-    metrics = ['goal11Quantity', 'goal12Quantity', 'goal13Quantity',
-               'rewardConfirmed', 'rewardCreated', 'rewardCanceled']
-    totals: dict[str, int | float] = {}
-    for m in metrics:
-        if m in sub.columns:
-            try:
-                totals[m] = int(sub[m].sum())
-            except (TypeError, ValueError):
-                totals[m] = 0
-        else:
-            totals[m] = 0
+    totals = {'goal11Quantity': 0, 'goal12Quantity': 0, 'goal13Quantity': 0,
+              'rewardConfirmed': 0, 'rewardCreated': 0, 'rewardCanceled': 0}
+
+    # 1) conversions (preferred)
+    covered: set[str] = set()
+    email = await _user_id_to_email(user_id)
+    if email:
+        try:
+            conv_totals, covered = await _stats_from_conversions(email, start_d, end_d)
+            for k, v in conv_totals.items():
+                totals[k] = totals.get(k, 0) + v
+        except Exception as e:
+            logger.warning(f'[WL] conversions aggregation failed: {e}')
+
+    # 2) stats_group_by fallback for dates not covered by conversions
+    df = await _get('stats_group_by')
+    if df is not None and not df.empty:
+        sub = df[
+            (df['userId'] == int(user_id))
+            & (df['datetz'].astype(str) >= start_d.isoformat())
+            & (df['datetz'].astype(str) <= end_d.isoformat())
+        ]
+        if covered:
+            sub = sub[~sub['datetz'].astype(str).isin(covered)]
+        if not sub.empty:
+            for m in ('goal11Quantity', 'goal12Quantity', 'goal13Quantity',
+                      'rewardConfirmed', 'rewardCreated', 'rewardCanceled'):
+                if m in sub.columns:
+                    try:
+                        totals[m] += int(sub[m].fillna(0).sum())
+                    except (TypeError, ValueError):
+                        pass
+
     # clicks intentionally absent — caller fills it from API
     totals['clicks'] = 0
     return totals

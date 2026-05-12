@@ -340,6 +340,8 @@ async def get_user_by_email(email: str) -> Optional[dict]:
 
     Switches between live API and S3 dumps based on WL_DATA_SOURCE env.
     On S3 miss, falls back to API so freshly-registered users are not stranded.
+    On S3 HIT, still augments with API-only fields (credit/debit/emailConfirmed/
+    referrer) so the partner card shows real balance instead of zeros.
     """
     if _use_dumps():
         from . import dumps
@@ -349,6 +351,16 @@ async def get_user_by_email(email: str) -> Optional[dict]:
             logger.warning(f'[WL] dumps.get_user_by_email failed: {e}')
             user = None
         if user:
+            # Augment with fields not present in the S3 dump.
+            try:
+                api_user = await _get_user_by_email_api(email)
+            except Exception as e:
+                logger.warning(f'[WL] api augmentation failed for {email}: {e}')
+                api_user = None
+            if api_user:
+                for k in ('credit', 'debit', 'emailConfirmed', 'referrer'):
+                    if user.get(k) in (None, '') and api_user.get(k) is not None:
+                        user[k] = api_user[k]
             return user
         logger.info(f'[WL] dumps miss for email={email}, falling back to api')
     return await _get_user_by_email_api(email)
