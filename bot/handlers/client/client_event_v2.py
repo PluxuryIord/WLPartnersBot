@@ -203,10 +203,15 @@ async def event_v2_partner_yes(call: CallbackQuery, state: FSMContext):
 async def event_v2_want_merch(call: CallbackQuery, state: FSMContext):
     """«🎁 Хочу мерч» на экране event_congrats у уже-партнёра с раффл-билетом.
     Запускает обычную анкету. Флаг skip_raffle_promo гарантирует, что в конце
-    анкеты бот выдаст мерч-QR, но НЕ пришлёт второй раз раффл-промо."""
+    анкеты бот выдаст мерч-QR, но НЕ пришлёт второй раз раффл-промо.
+
+    Сообщение с номером билета НЕ удаляем — оно должно остаться у юзера
+    как подтверждение участия. Просто снимаем кнопку, чтобы её нельзя было
+    нажать повторно, и стартуем анкету отдельным сообщением.
+    """
     from bot.handlers.client.client_main import _start_event_anketa  # type: ignore
     try:
-        await call.message.delete()
+        await call.message.edit_reply_markup(reply_markup=None)
     except TelegramAPIError:
         pass
     await call.answer()
