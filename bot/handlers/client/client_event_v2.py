@@ -132,18 +132,38 @@ async def _show_congrats(user_id: int, ticket_label: str):
     text = (get_text('event_congrats', 'text') or fallback).replace('№******', f'№{ticket_label}')
     text = text.replace('{ticket}', ticket_label)
 
-    # Достаём клавиатуру из сценария и гарантируем что есть кнопка «Хочу мерч».
+    # Достаём клавиатуру из сценария. Кнопка «Хочу мерч» имеет смысл только
+    # для уже-партнёра, который мерч ещё не получал — для «не работаю»-флоу
+    # мерч-QR выдаётся в конце анкеты до показа этого экрана, повторная
+    # кнопка приведёт к выдаче второго QR.
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from bot.handlers.client.client_main import get_user_merch_code
+    already_has_merch = False
+    try:
+        already_has_merch = bool(await get_user_merch_code(user_id))
+    except Exception as e:
+        logger.warning(f'[event_v2] merch-code check failed: {e}')
+
     src_kb = get_screen_kb('event_congrats')
     rows = []
     if src_kb is not None and src_kb.inline_keyboard:
         rows = [list(r) for r in src_kb.inline_keyboard]
-    has_merch_btn = any(
-        (btn.callback_data == 'event_v2_want_merch') for r in rows for btn in r
-    )
-    if not has_merch_btn:
-        rows.insert(0, [InlineKeyboardButton(text='🎁 Хочу мерч', callback_data='event_v2_want_merch')])
-    extra_kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    if already_has_merch:
+        # Drop any «Хочу мерч» button(s) that the scenario kb may carry.
+        rows = [
+            [b for b in r if b.callback_data != 'event_v2_want_merch']
+            for r in rows
+        ]
+        rows = [r for r in rows if r]  # purge rows that became empty
+    else:
+        has_merch_btn = any(
+            (btn.callback_data == 'event_v2_want_merch') for r in rows for btn in r
+        )
+        if not has_merch_btn:
+            rows.insert(0, [InlineKeyboardButton(text='🎁 Хочу мерч', callback_data='event_v2_want_merch')])
+
+    extra_kb = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
     await _show_screen(user_id, 'event_congrats', fallback=text, extra_text='', extra_kb=extra_kb)
     # Override text rendered by _show_screen since it pulled raw template.
