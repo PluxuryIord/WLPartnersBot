@@ -147,7 +147,11 @@ async def main_menu(update: Union[Message, CallbackQuery],
             thread_id, registration_alert, main_bot=True,
             reply_markup=kb_admin_topic.topic_management(user.id))
     else:
-        await telegram.delete_message(chat_id=user.id, message_id=user_data.menu_id)
+        # menu_id may be None/0 if the previous bot message was a "permanent"
+        # one (raffle congrats, merch QR) that we explicitly do NOT want to
+        # erase from the chat — see _show_congrats / _send_event_qr.
+        if user_data.menu_id:
+            await telegram.delete_message(chat_id=user.id, message_id=user_data.menu_id)
         if alert:
             new_menu_id = await bot.send_message(user.id, '<b>ℹ️Открыто меню из рассылки</b>',
                                                  reply_markup=kb_client_menu.back_menu)
@@ -1645,7 +1649,12 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
         caption=caption,
         reply_markup=reply_markup,
     )
-    DB.User.update(mark=user_id, menu_id=new_menu.message_id)
+    # IMPORTANT: do NOT store the merch-QR message id as menu_id. Future
+    # menu-replacements (start, back-to-menu, etc.) wipe out whatever
+    # menu_id points to — and the QR with the partner's code must stay
+    # in the chat permanently. Setting menu_id=None makes the next menu
+    # come up as a fresh message instead.
+    DB.User.update(mark=user_id, menu_id=None)
     return new_menu
 
 async def start_event(message: Message, state: FSMContext):

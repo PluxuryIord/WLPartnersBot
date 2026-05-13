@@ -186,6 +186,14 @@ async def _show_congrats(user_id: int, ticket_label: str):
         except TelegramAPIError:
             pass
 
+    # IMPORTANT: clear menu_id so the raffle congrats (with the partner's
+    # ticket number) is NOT deleted on the next /start or main-menu click.
+    # The next menu opens as a fresh message instead of replacing this one.
+    try:
+        DB.User.update(mark=user_id, menu_id=None)
+    except Exception as e:
+        logger.warning(f'[event_v2] failed to clear menu_id after congrats: {e}')
+
 
 # ─── Flow: entry point ──────────────────────────────────────────────────────
 
