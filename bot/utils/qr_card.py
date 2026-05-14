@@ -12,8 +12,8 @@
 ~50KB, шрифт ~150KB — копейки.
 
 API: единственная асинхронная функция `generate_qr_card_bytes(code, caption)`,
-возвращает bytes JPEG (quality 92 — баланс размер/качество, QR сканируется
-надёжно). Тяжёлая работа pillow вынесена в thread pool.
+возвращает bytes PNG (lossless — острые края QR остаются чёткими как у
+sharp на админ-панели). Тяжёлая работа pillow вынесена в thread pool.
 """
 from __future__ import annotations
 
@@ -29,14 +29,14 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger('wl_bot')
 
-# ── Card layout ─────────────────────────────────────────────────────────────
-CARD_W = 400
-CARD_H = 600
-QR_SIZE = 280
-QR_TOP = 140
+# ── Card layout — те же пропорции, что у админской карточки ───────────────
+CARD_W = 530
+CARD_H = 800
+QR_SIZE = 320
+QR_TOP = 200
 QR_COLOR = (255, 106, 19)  # #FF6A13 — Winline orange
-FONT_SIZE = 44
-LINE_GAP = 12
+FONT_SIZE = 72
+LINE_GAP = 16
 
 # Source: same admin server that used to render the whole card.
 ADMIN_BASE = (os.getenv('ADMIN_PANEL_BASE') or 'https://winlinepartners.ru').rstrip('/')
@@ -124,14 +124,15 @@ def _generate_sync(code: str, caption: str) -> bytes:
         text_top = space_top + max(0, (space_h - text_block_h) // 2)
         _draw_centered_text(draw, caption, text_top, _font)
 
-    # JPEG @ 92 — sharp QR edges still scan reliably; ~30KB vs 200-500KB for PNG.
+    # PNG, lossless. Compression level 1 — самое быстрое сжатие, file ~2-3x
+    # больше (~400-600 KB) но encode в 3-5x быстрее.
     out = io.BytesIO()
-    bg.convert('RGB').save(out, 'JPEG', quality=92, optimize=False)
+    bg.save(out, 'PNG', compress_level=1)
     return out.getvalue()
 
 
 async def generate_qr_card_bytes(code: str, caption: str = '') -> bytes:
-    """Public entry point. Returns JPEG bytes ready for Telegram send_photo."""
+    """Public entry point. Returns PNG bytes ready for Telegram send_photo."""
     await _ensure_assets()
     return await asyncio.to_thread(_generate_sync, code, caption)
 

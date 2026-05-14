@@ -1664,14 +1664,21 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     reply_markup = None
 
     # Render QR card LOCALLY (pillow) instead of fetching from admin panel.
-    # Eliminates the HTTP round-trip Копенгаген ↔ Москва (~100 ms) plus the
-    # 1-1.5s admin-side sharp pipeline. Template + font are cached in memory.
+    # Eliminates the HTTP round-trip + admin-side sharp pipeline.
+    # Тайминги логируем, чтобы видеть РЕАЛЬНОЕ узкое место.
+    import time as _t
     from bot.utils.qr_card import generate_qr_card_bytes
     from aiogram.types import BufferedInputFile
+
+    _t0 = _t.monotonic()
     qr_caption_overlay = _get_qr_caption() or ''
+    _t1 = _t.monotonic()
     try:
         card_bytes = await generate_qr_card_bytes(event_code, qr_caption_overlay)
-        photo_payload = BufferedInputFile(card_bytes, filename=f'{event_code}.jpg')
+        _t2 = _t.monotonic()
+        photo_payload = BufferedInputFile(card_bytes, filename=f'{event_code}.png')
+        _render_ms = int((_t2 - _t1) * 1000)
+        _size_kb = len(card_bytes) // 1024
     except Exception as _e:
         # Last-ditch fallback: bare QR via FSInputFile, matches previous behavior.
         logger.warning(f'[QR-CARD] local render failed, falling back to bare QR: {_e}')
@@ -1682,15 +1689,27 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
         qr_path = f"files/{user_id}_card.png"
         img.save(qr_path)
         photo_payload = FSInputFile(qr_path)
+        _render_ms = -1
+        _size_kb = -1
 
     caption = f'<b>Вот ваш QR для получения подарка!</b>'
     if event_code:
         caption += f'\n\nКод: <code>{event_code}</code>'
+
+    _t3 = _t.monotonic()
     new_menu = await bot.send_photo(
         chat_id=user_id,
         photo=photo_payload,
         caption=caption,
         reply_markup=reply_markup,
+    )
+    _t4 = _t.monotonic()
+    logger.info(
+        f'[QR-TIMING] user={user_id} code={event_code} '
+        f'caption_lookup={int((_t1-_t0)*1000)}ms '
+        f'render={_render_ms}ms ({_size_kb}KB) '
+        f'tg_send={int((_t4-_t3)*1000)}ms '
+        f'total={int((_t4-_t0)*1000)}ms'
     )
     # IMPORTANT: do NOT store the merch-QR message id as menu_id. Future
     # menu-replacements (start, back-to-menu, etc.) wipe out whatever
