@@ -227,6 +227,7 @@ async def event_v2_intro_next(call: CallbackQuery, state: FSMContext):
     await _show_screen(
         call.from_user.id, 'event_partner_check',
         fallback='<b>Вы уже работаете с WINLINE PARTNERS?</b>',
+        message_key='prompt',
     )
     await call.answer()
 
