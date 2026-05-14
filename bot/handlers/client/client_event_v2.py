@@ -261,21 +261,32 @@ async def event_v2_want_merch(call: CallbackQuery, state: FSMContext):
     Сообщение с номером билета НЕ удаляем — оно должно остаться у юзера
     как подтверждение участия. Просто снимаем кнопку, чтобы её нельзя было
     нажать повторно, и стартуем анкету отдельным сообщением.
+
+    PERF: выдаём merch event_code прямо здесь, в начале анкеты — пока юзер
+    отвечает на вопросы (~30 сек), warm-up успевает прогреть кэш на админке.
+    К моменту _send_event_qr в _anketa_finish — карточка готова.
     """
-    from bot.handlers.client.client_main import _start_event_anketa  # type: ignore
+    from bot.handlers.client.client_main import _start_event_anketa, issue_event_code  # type: ignore
+    user_id = call.from_user.id
+    user_data = DB.User.select(user_id)
+    label = user_data.full_name if user_data else str(user_id)
+    # Идемпотентно: если код уже есть — issue_event_code вернёт existing, без
+    # повторного INSERT и без повторного warm-up.
+    asyncio.create_task(issue_event_code(user_id, label, 'merch'))
+
     try:
         await call.message.edit_reply_markup(reply_markup=None)
     except TelegramAPIError:
         pass
     await call.answer()
     try:
-        await _start_event_anketa(call.message, call.from_user.id, state)
+        await _start_event_anketa(call.message, user_id, state)
         # state уже выставлен в _start_event_anketa, дополняем флагом
         await state.update_data(skip_raffle_promo=True)
     except Exception as e:
         logger.error(f'[event_v2] want_merch → anketa failed: {e}')
         try:
-            await bot.send_message(call.from_user.id, '⚠️ Не удалось запустить анкету, попробуйте ещё раз.')
+            await bot.send_message(user_id, '⚠️ Не удалось запустить анкету, попробуйте ещё раз.')
         except Exception:
             pass
 
@@ -287,19 +298,31 @@ async def event_v2_partner_no(call: CallbackQuery, state: FSMContext):
     явно сказал что он не партнёр, значит анкета релевантна. Старый
     обёрточный start_event_anketa_callback в этом случае пропускал бы
     анкету и сразу слал мерч-QR.
+
+    PERF: выдаём merch event_code прямо здесь, в начале анкеты — warm-up
+    на админке прогревает qr-card pipeline (или локальный pillow только
+    подтянет шрифт + фон), пока юзер 30 секунд заполняет анкету. К моменту
+    _send_event_qr ассеты уже в памяти, рендер мгновенный.
     """
-    from bot.handlers.client.client_main import _start_event_anketa  # type: ignore
+    from bot.handlers.client.client_main import _start_event_anketa, issue_event_code  # type: ignore
+    from bot.utils.qr_card import preload_assets  # type: ignore
+    user_id = call.from_user.id
+    user_data = DB.User.select(user_id)
+    label = user_data.full_name if user_data else str(user_id)
+    asyncio.create_task(issue_event_code(user_id, label, 'merch'))
+    asyncio.create_task(preload_assets())
+
     try:
         await call.message.delete()
     except TelegramAPIError:
         pass
     await call.answer()
     try:
-        await _start_event_anketa(call.message, call.from_user.id, state)
+        await _start_event_anketa(call.message, user_id, state)
     except Exception as e:
         logger.error(f'[event_v2] start_event_anketa failed: {e}')
         try:
-            await bot.send_message(call.from_user.id, '⚠️ Не удалось запустить анкету, попробуйте ещё раз.')
+            await bot.send_message(user_id, '⚠️ Не удалось запустить анкету, попробуйте ещё раз.')
         except Exception:
             pass
 

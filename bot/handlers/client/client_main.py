@@ -1663,31 +1663,32 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     # Промо регистрации придёт отдельным сообщением после скана QR хостес.
     reply_markup = None
 
-    # Download QR card from panel server
-    qr_card_url = f'https://winlinepartners.ru/api/events/codes/{event_code}/qr-card'
-    qr_path = f"files/{user_id}_card.png"
+    # Render QR card LOCALLY (pillow) instead of fetching from admin panel.
+    # Eliminates the HTTP round-trip Копенгаген ↔ Москва (~100 ms) plus the
+    # 1-1.5s admin-side sharp pipeline. Template + font are cached in memory.
+    from bot.utils.qr_card import generate_qr_card_bytes
+    from aiogram.types import BufferedInputFile
+    qr_caption_overlay = _get_qr_caption() or ''
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-            async with session.get(qr_card_url) as resp:
-                if resp.status == 200:
-                    with open(qr_path, 'wb') as f_out:
-                        f_out.write(await resp.read())
-                else:
-                    raise Exception(f'HTTP {resp.status}')
+        card_bytes = await generate_qr_card_bytes(event_code, qr_caption_overlay)
+        photo_payload = BufferedInputFile(card_bytes, filename=f'{event_code}.jpg')
     except Exception as _e:
-        logger.warning(f'[QR-CARD] Fallback: {_e}')
+        # Last-ditch fallback: bare QR via FSInputFile, matches previous behavior.
+        logger.warning(f'[QR-CARD] local render failed, falling back to bare QR: {_e}')
         qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
         qr.add_data(event_code)
         qr.make(fit=True)
         img = qr.make_image(fill_color='black', back_color='white')
+        qr_path = f"files/{user_id}_card.png"
         img.save(qr_path)
-    
+        photo_payload = FSInputFile(qr_path)
+
     caption = f'<b>Вот ваш QR для получения подарка!</b>'
     if event_code:
         caption += f'\n\nКод: <code>{event_code}</code>'
     new_menu = await bot.send_photo(
         chat_id=user_id,
-        photo=FSInputFile(qr_path),
+        photo=photo_payload,
         caption=caption,
         reply_markup=reply_markup,
     )
