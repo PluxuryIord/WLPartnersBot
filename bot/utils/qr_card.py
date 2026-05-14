@@ -143,3 +143,46 @@ async def preload_assets() -> None:
         await _ensure_assets()
     except Exception as e:
         logger.warning(f'[qr-card] preload failed (non-fatal): {e}')
+
+
+# ── Pre-generated cards cache ───────────────────────────────────────────────
+# Идея: когда юзер только-только заходит по deep-link
+# (t.me/winline_partners_bot?start=event), мы в фоне выпускаем event_code и
+# рендерим карточку. Пока юзер 30 секунд проходит интро и анкету, карточка
+# уже готова и лежит в этом dict'е. В _send_event_qr делаем pop — отдаём
+# мгновенно, без рендера. Если pre-gen не успел/упал — fallback на on-demand
+# рендер сохранён.
+_pregenerated_cards: dict = {}
+_PREGEN_TTL_SEC = 3600  # 1 час, чтобы протухшие записи не копились
+
+
+def cache_qr_card(code: str, data: bytes) -> None:
+    """Положить уже отрендеренные байты в кэш под ключом event_code."""
+    import time as _t
+    _pregenerated_cards[code] = (_t.monotonic(), data)
+
+
+def pop_qr_card(code: str) -> Optional[bytes]:
+    """Достать байты из кэша, если есть и не протухли. Удаляет запись."""
+    import time as _t
+    entry = _pregenerated_cards.pop(code, None)
+    if not entry:
+        return None
+    ts, data = entry
+    if _t.monotonic() - ts > _PREGEN_TTL_SEC:
+        return None
+    return data
+
+
+async def pregenerate_qr_card(code: str, caption: str = '') -> None:
+    """Отрендерить карточку фоном и положить в кэш. Безопасна к ошибкам."""
+    if not code:
+        return
+    if code in _pregenerated_cards:
+        return  # уже отрендерено для этого кода — не дублируем работу
+    try:
+        data = await generate_qr_card_bytes(code, caption)
+        cache_qr_card(code, data)
+        logger.info(f'[qr-card] pregenerate ok: code={code} size={len(data)//1024}KB')
+    except Exception as e:
+        logger.warning(f'[qr-card] pregenerate failed for {code}: {e}')

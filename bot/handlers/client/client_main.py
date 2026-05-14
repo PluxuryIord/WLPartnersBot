@@ -207,6 +207,13 @@ async def start_command(message: Message, command: CommandObject, state: FSMCont
         if state and await state.get_state():
             await state.clear()
         from bot.handlers.client.client_event_v2 import _show_screen
+        # PERF: пока юзер смотрит intro и проходит анкету (~30-60 секунд),
+        # параллельно выдаём ему event_code и рендерим QR-карточку в кэш.
+        # К моменту _send_event_qr — pop_qr_card вернёт готовые байты,
+        # рендер = 0 мс. Идемпотентно: если код уже был — issue_event_code
+        # вернёт existing, и мы рендерим под него.
+        asyncio.create_task(_pregenerate_for_user(message.from_user.id))
+
         # Сначала показываем приветственный экран event_intro с баннером и
         # кнопкой «Далее». По нажатию пользователь попадёт в event_partner_check.
         await _show_screen(
@@ -1453,6 +1460,29 @@ async def issue_event_code(user_id, label='', kind='merch'):
     return status, event_code
 
 
+async def _pregenerate_for_user(user_id: int) -> None:
+    """Полный pre-flight для merch-QR: выдаём код + рендерим карточку в кэш.
+
+    Запускается, как только юзер открывает deep-link мероприятия — пока
+    он смотрит интро и заполняет анкету (~30-60 сек), бот успевает всё
+    приготовить. В _send_event_qr остаётся только TG-upload.
+
+    Безопасна к ошибкам — если что-то отвалится, _send_event_qr сделает
+    on-demand рендер как обычно.
+    """
+    from bot.utils.qr_card import pregenerate_qr_card  # type: ignore
+    try:
+        user_data = DB.User.select(user_id)
+        label = user_data.full_name if user_data else str(user_id)
+        status, code = await issue_event_code(user_id, label, 'merch')
+        if not code:
+            return
+        caption = _get_qr_caption() or ''
+        await pregenerate_qr_card(code, caption)
+    except Exception as e:
+        logger.warning(f'[qr-pregenerate] user={user_id}: {e}')
+
+
 def _sync_get_user_merch_code(user_id):
     """Return user's existing merch event_code (or None). Read-only, no allocation."""
     _db_cfg = {
@@ -1686,14 +1716,19 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     # Eliminates the HTTP round-trip + admin-side sharp pipeline.
     # Тайминги логируем, чтобы видеть РЕАЛЬНОЕ узкое место.
     import time as _t
-    from bot.utils.qr_card import generate_qr_card_bytes
+    from bot.utils.qr_card import generate_qr_card_bytes, pop_qr_card
     from aiogram.types import BufferedInputFile
 
     _t0 = _t.monotonic()
-    qr_caption_overlay = _get_qr_caption() or ''
+    # Сначала пробуем cache: pregenerate_qr_card мог уже отрендерить карточку
+    # пока юзер ходил по интро + анкете — тогда здесь работа = 0.
+    card_bytes = pop_qr_card(event_code)
+    _from_cache = card_bytes is not None
     _t1 = _t.monotonic()
     try:
-        card_bytes = await generate_qr_card_bytes(event_code, qr_caption_overlay)
+        if card_bytes is None:
+            qr_caption_overlay = _get_qr_caption() or ''
+            card_bytes = await generate_qr_card_bytes(event_code, qr_caption_overlay)
         _t2 = _t.monotonic()
         photo_payload = BufferedInputFile(card_bytes, filename=f'{event_code}.png')
         _render_ms = int((_t2 - _t1) * 1000)
@@ -1725,7 +1760,8 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     _t4 = _t.monotonic()
     logger.info(
         f'[QR-TIMING] user={user_id} code={event_code} '
-        f'caption_lookup={int((_t1-_t0)*1000)}ms '
+        f'cache_hit={_from_cache} '
+        f'lookup_or_render={int((_t1-_t0)*1000)}ms '
         f'render={_render_ms}ms ({_size_kb}KB) '
         f'tg_send={int((_t4-_t3)*1000)}ms '
         f'total={int((_t4-_t0)*1000)}ms'

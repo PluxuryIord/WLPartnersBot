@@ -262,17 +262,13 @@ async def event_v2_want_merch(call: CallbackQuery, state: FSMContext):
     как подтверждение участия. Просто снимаем кнопку, чтобы её нельзя было
     нажать повторно, и стартуем анкету отдельным сообщением.
 
-    PERF: выдаём merch event_code прямо здесь, в начале анкеты — пока юзер
-    отвечает на вопросы (~30 сек), warm-up успевает прогреть кэш на админке.
-    К моменту _send_event_qr в _anketa_finish — карточка готова.
+    PERF: выдаём merch event_code прямо здесь, в начале анкеты + рендерим
+    QR-карточку в кэш. Пока юзер ~30 сек отвечает на вопросы, всё успевает
+    приготовиться. К моменту _send_event_qr остаётся только TG-upload.
     """
-    from bot.handlers.client.client_main import _start_event_anketa, issue_event_code  # type: ignore
+    from bot.handlers.client.client_main import _start_event_anketa, _pregenerate_for_user  # type: ignore
     user_id = call.from_user.id
-    user_data = DB.User.select(user_id)
-    label = user_data.full_name if user_data else str(user_id)
-    # Идемпотентно: если код уже есть — issue_event_code вернёт existing, без
-    # повторного INSERT и без повторного warm-up.
-    asyncio.create_task(issue_event_code(user_id, label, 'merch'))
+    asyncio.create_task(_pregenerate_for_user(user_id))
 
     try:
         await call.message.edit_reply_markup(reply_markup=None)
@@ -299,18 +295,13 @@ async def event_v2_partner_no(call: CallbackQuery, state: FSMContext):
     обёрточный start_event_anketa_callback в этом случае пропускал бы
     анкету и сразу слал мерч-QR.
 
-    PERF: выдаём merch event_code прямо здесь, в начале анкеты — warm-up
-    на админке прогревает qr-card pipeline (или локальный pillow только
-    подтянет шрифт + фон), пока юзер 30 секунд заполняет анкету. К моменту
-    _send_event_qr ассеты уже в памяти, рендер мгновенный.
+    PERF: pre-gen карточки на старте анкеты — выдаём код и рендерим
+    QR-картинку в фоне, пока юзер 30 секунд отвечает. К моменту
+    _send_event_qr в _anketa_finish байты уже лежат в памяти.
     """
-    from bot.handlers.client.client_main import _start_event_anketa, issue_event_code  # type: ignore
-    from bot.utils.qr_card import preload_assets  # type: ignore
+    from bot.handlers.client.client_main import _start_event_anketa, _pregenerate_for_user  # type: ignore
     user_id = call.from_user.id
-    user_data = DB.User.select(user_id)
-    label = user_data.full_name if user_data else str(user_id)
-    asyncio.create_task(issue_event_code(user_id, label, 'merch'))
-    asyncio.create_task(preload_assets())
+    asyncio.create_task(_pregenerate_for_user(user_id))
 
     try:
         await call.message.delete()
