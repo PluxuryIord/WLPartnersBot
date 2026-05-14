@@ -193,7 +193,31 @@ async def _show_congrats(user_id: int, ticket_label: str, show_merch_button: boo
 # ─── Flow: entry point ──────────────────────────────────────────────────────
 
 async def event_v2_start(call: CallbackQuery, state: FSMContext):
-    """Замена client_at_event: показывает экран event_partner_check."""
+    """Старт сценария 3: показываем приветственный экран event_intro
+    (баннер + текст про эксклюзивный мерч + кнопка «Далее»). По нажатию
+    «Далее» (event_v2_intro_next) пользователь попадает в event_partner_check
+    с вопросом «Вы работаете с WL?»."""
+    if state and await state.get_state():
+        await state.clear()
+    try:
+        await call.message.delete()
+    except TelegramAPIError:
+        pass
+    await _show_screen(
+        call.from_user.id, 'event_intro',
+        fallback=(
+            '<b>Хочешь получить эксклюзивный мерч, стать партнёром и зарабатывать '
+            'вместе с WINLINE PARTNERS?</b>\n\n'
+            'Регистрируйся и заполняй анкету! После регистрации, с тобой свяжется '
+            'наш Affiliate-менеджер @winline_affiliate и расскажет об условиях.'
+        ),
+        message_key='welcome',
+    )
+    await call.answer()
+
+
+async def event_v2_intro_next(call: CallbackQuery, state: FSMContext):
+    """«Далее» из event_intro → переход к выбору event_partner_check."""
     if state and await state.get_state():
         await state.clear()
     try:
@@ -632,6 +656,7 @@ def register(dp):
     """Регистрация хендлеров. Вызывается из client_main.register_client_handlers."""
     from aiogram import F
     dp.callback_query.register(event_v2_start,                F.data == 'client_at_event')
+    dp.callback_query.register(event_v2_intro_next,           F.data == 'event_v2_intro_next')
     dp.callback_query.register(event_v2_partner_yes,          F.data == 'event_v2_partner_yes')
     dp.callback_query.register(event_v2_partner_no,           F.data == 'event_v2_partner_no')
     dp.callback_query.register(event_v2_want_merch,           F.data == 'event_v2_want_merch')
