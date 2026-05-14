@@ -213,6 +213,10 @@ async def start_command(message: Message, command: CommandObject, state: FSMCont
         # рендер = 0 мс. Идемпотентно: если код уже был — issue_event_code
         # вернёт existing, и мы рендерим под него.
         asyncio.create_task(_pregenerate_for_user(message.from_user.id))
+        # Тег для аудитории мероприятия. Применяем всем кто пришёл по
+        # deep-link на сценарий 3 — даже если потом ничего не сделают,
+        # факт перехода фиксируем.
+        asyncio.create_task(add_user_tag(message.from_user.id, EVENT_TAG))
 
         # Сначала показываем приветственный экран event_intro с баннером и
         # кнопкой «Далее». По нажатию пользователь попадёт в event_partner_check.
@@ -1458,6 +1462,41 @@ async def issue_event_code(user_id, label='', kind='merch'):
     if status == 'created' and event_code:
         asyncio.create_task(_warmup_qr_card(event_code))
     return status, event_code
+
+
+def _sync_add_user_tag(user_id: int, tag: str) -> None:
+    """Append a tag to wl_admin_user_tags. Idempotent — INSERT IGNORE."""
+    _cfg = {
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
+        'database': os.getenv('MYSQL_DATABASE', ''),
+    }
+    c = None
+    try:
+        c = mysql.connector.connect(**_cfg)
+        cur = c.cursor()
+        cur.execute(
+            'INSERT IGNORE INTO wl_admin_user_tags (user_id, tag) VALUES (%s, %s)',
+            (user_id, tag),
+        )
+        c.commit()
+    finally:
+        try:
+            if c: c.close()
+        except Exception:
+            pass
+
+
+async def add_user_tag(user_id: int, tag: str) -> None:
+    """Async, non-blocking. Use as `asyncio.create_task(add_user_tag(...))`."""
+    try:
+        await asyncio.to_thread(_sync_add_user_tag, user_id, tag)
+    except Exception as e:
+        logger.warning(f'[user_tag] add {tag!r} for {user_id} failed: {e}')
+
+
+# Тег, который вешается всем, кто проходит сценарий 3 (мероприятие 26-27.05).
+EVENT_TAG = 'MAC 26'
 
 
 async def _pregenerate_for_user(user_id: int) -> None:
