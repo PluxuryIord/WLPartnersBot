@@ -207,9 +207,17 @@ async def start_command(message: Message, command: CommandObject, state: FSMCont
         if state and await state.get_state():
             await state.clear()
         from bot.handlers.client.client_event_v2 import _show_screen
+        # Сначала показываем приветственный экран event_intro с баннером и
+        # кнопкой «Далее». По нажатию пользователь попадёт в event_partner_check.
         await _show_screen(
-            message.from_user.id, 'event_partner_check',
-            fallback='<b>Вы уже работаете с WINLINE PARTNERS?</b>',
+            message.from_user.id, 'event_intro',
+            fallback=(
+                '<b>Хочешь получить эксклюзивный мерч, стать партнёром и зарабатывать '
+                'вместе с WINLINE PARTNERS?</b>\n\n'
+                'Регистрируйся и заполняй анкету! После регистрации, с тобой свяжется '
+                'наш Affiliate-менеджер @winline_affiliate и расскажет об условиях.'
+            ),
+            message_key='welcome',
         )
         return
     return await main_menu(message, message.from_user, user_data, state)
