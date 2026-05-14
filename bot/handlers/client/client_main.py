@@ -1598,8 +1598,21 @@ async def reg_help(call: CallbackQuery):
 # ==================== Сценарий 3: Мероприятие (deep link + анкета) ====================
 
 
+# Module-level TTL cache for qr_caption_text. Был холодный путь: каждый
+# показ QR открывал свежий MySQL connect к удалённой db.buy-bot.ru —
+# auth + query + close ≈ 400 мс, что давало ~55% всего времени _send_event_qr
+# (см. [QR-TIMING] лог). Caption меняется в админке от силы раз в день,
+# 60 секунд TTL абсолютно безопасны и снимают всю эту задержку.
+_QR_CAPTION_CACHE: dict = {'value': None, 'expires_at': 0.0}
+_QR_CAPTION_TTL_SEC = 60
+
+
 def _get_qr_caption() -> str:
-    """Get QR caption text from event_settings in DB."""
+    """Get QR caption text from event_settings in DB, with 60s in-memory cache."""
+    import time as _t
+    now = _t.monotonic()
+    if _QR_CAPTION_CACHE['value'] is not None and now < _QR_CAPTION_CACHE['expires_at']:
+        return _QR_CAPTION_CACHE['value']
     try:
         _db_cfg = {
             'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
@@ -1614,9 +1627,15 @@ def _get_qr_caption() -> str:
         if row:
             _data = row['data']
             _s = json_mod.loads(_data) if isinstance(_data, str) else _data
-            return _s.get('qr_caption_text', '')
+            caption = _s.get('qr_caption_text', '') or ''
+            _QR_CAPTION_CACHE['value'] = caption
+            _QR_CAPTION_CACHE['expires_at'] = now + _QR_CAPTION_TTL_SEC
+            return caption
     except Exception as e:
         logger.debug(f"Suppressed: {e}")
+    # Кэшируем даже пустой ответ — чтобы при ошибках БД не лезть туда снова.
+    _QR_CAPTION_CACHE['value'] = ''
+    _QR_CAPTION_CACHE['expires_at'] = now + _QR_CAPTION_TTL_SEC
     return ''
 
 async def _generate_event_qr(user_id: int) -> str:
