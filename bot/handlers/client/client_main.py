@@ -19,8 +19,8 @@ import mysql.connector
 from io import BytesIO
 from aiogram.types import BufferedInputFile
 
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Union
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Union, Optional
 
 from aiogram.utils.markdown import hlink
 from aiogram.fsm.context import FSMContext
@@ -213,10 +213,11 @@ async def start_command(message: Message, command: CommandObject, state: FSMCont
         # рендер = 0 мс. Идемпотентно: если код уже был — issue_event_code
         # вернёт existing, и мы рендерим под него.
         asyncio.create_task(_pregenerate_for_user(message.from_user.id))
-        # Тег для аудитории мероприятия. Применяем всем кто пришёл по
-        # deep-link на сценарий 3 — даже если потом ничего не сделают,
-        # факт перехода фиксируем.
-        asyncio.create_task(add_user_tag(message.from_user.id, EVENT_TAG))
+        # Тег только в дни мероприятия (26.05 → MAC 26, 27.05 → MAC 27).
+        # В остальные дни таг не вешается — get_today_event_tag вернёт None.
+        _today_tag = get_today_event_tag()
+        if _today_tag:
+            asyncio.create_task(add_user_tag(message.from_user.id, _today_tag))
 
         # Сначала показываем приветственный экран event_intro с баннером и
         # кнопкой «Далее». По нажатию пользователь попадёт в event_partner_check.
@@ -1495,7 +1496,21 @@ async def add_user_tag(user_id: int, tag: str) -> None:
         logger.warning(f'[user_tag] add {tag!r} for {user_id} failed: {e}')
 
 
-# Тег, который вешается всем, кто проходит сценарий 3 (мероприятие 26-27.05).
+# Теги мероприятия по датам. Применяются ТОЛЬКО если сегодня одна из этих
+# дат (МСК). В остальные дни сценарий 3 проходится молча, без тегов.
+EVENT_TAGS_BY_DATE = {
+    '2026-05-26': 'MAC 26',
+    '2026-05-27': 'MAC 27',
+}
+
+
+def get_today_event_tag() -> Optional[str]:
+    """Вернуть тег для сегодняшнего дня или None если сегодня не ивент."""
+    msk = datetime.now(timezone(timedelta(hours=3))).date().isoformat()
+    return EVENT_TAGS_BY_DATE.get(msk)
+
+
+# Backward-compat — оставляем константу-импорт, чтобы старые места не падали.
 EVENT_TAG = 'MAC 26'
 
 

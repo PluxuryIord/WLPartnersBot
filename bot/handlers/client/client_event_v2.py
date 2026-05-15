@@ -199,10 +199,12 @@ async def event_v2_start(call: CallbackQuery, state: FSMContext):
     с вопросом «Вы работаете с WL?»."""
     if state and await state.get_state():
         await state.clear()
-    # Метим юзера тегом мероприятия MAC 26 — даже если зашёл из главного меню,
-    # а не по deep-link. Поведение синхронизировано с start_command.
-    from bot.handlers.client.client_main import add_user_tag, EVENT_TAG  # type: ignore
-    asyncio.create_task(add_user_tag(call.from_user.id, EVENT_TAG))
+    # Тег мероприятия — только в дни ивента (26-27.05.2026 МСК).
+    # В остальные дни метить не нужно. Логика та же, что в start_command.
+    from bot.handlers.client.client_main import add_user_tag, get_today_event_tag  # type: ignore
+    _today_tag = get_today_event_tag()
+    if _today_tag:
+        asyncio.create_task(add_user_tag(call.from_user.id, _today_tag))
     try:
         await call.message.delete()
     except TelegramAPIError:

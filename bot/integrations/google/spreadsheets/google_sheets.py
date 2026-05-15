@@ -106,18 +106,57 @@ def _col_letter(n: int) -> str:
     return s
 
 
+def _today_date_sheet_name() -> str:
+    """Имя листа формата 'DD.MM.YYYY' для текущей даты МСК.
+
+    Совпадает с форматом, который `createAnketaSheet` на админ-панели
+    использует при создании листа (см. server/services/googleSheets.js).
+    """
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    msk = _dt.now(_tz(_td(hours=3)))
+    return msk.strftime('%d.%m.%Y')
+
+
+def _resolve_target_sheet(spreadsheet):
+    """Выбрать целевой лист для записи ответов.
+
+    Приоритет: лист с именем сегодняшней даты (DD.MM.YYYY). Это позволяет
+    мероприятию иметь отдельные листы на каждый день («26.05.2026»,
+    «27.05.2026») — регистрации автоматически распределяются по дате.
+    Если такого листа нет — fallback на активный лист из event_settings
+    (старое поведение).
+    """
+    date_name = _today_date_sheet_name()
+    try:
+        ws = spreadsheet.worksheet(date_name)
+        return date_name, ws
+    except Exception:
+        pass
+    fallback = _get_active_sheet_name()
+    if not fallback:
+        return None, None
+    try:
+        return fallback, spreadsheet.worksheet(fallback)
+    except Exception as e:
+        print(f'[google_sheets] Активный лист {fallback!r} не найден: {e}')
+        return None, None
+
+
 async def new_answers(user_id: str, full_name: str, username: str, answers: dict):
     """
     Save anketa answers to Google Sheets.
     answers: dict of {answerKey: value}, e.g. {'role': 'Трафик', 'company': 'Acme', 'traffic_type': 'Gambling'}
-    Writes to the active sheet (set via admin panel). If no sheet — skips.
+    Routing: prefers a sheet named with today's date (DD.MM.YYYY), so the event
+    days 26.05.2026 / 27.05.2026 collect their registrations into separate
+    pre-created sheets automatically. Falls back to anketa_active_sheet
+    (set via admin panel) when no date-named sheet exists.
     Column mapping is by ORDER of answerKeys from bot_scenarios (not by header name),
     so Google Sheet can have human-readable Russian titles in header row.
     """
     try:
-        sheet_name = _get_active_sheet_name()
-        if not sheet_name:
-            print('[google_sheets] Нет активного листа анкеты — пропускаю запись')
+        sheet_name, ws = _resolve_target_sheet(sh)
+        if not sheet_name or not ws:
+            print('[google_sheets] Нет ни листа на сегодня, ни активного — пропускаю запись')
             return
 
         answer_keys = _get_anketa_answer_keys()
@@ -125,8 +164,7 @@ async def new_answers(user_id: str, full_name: str, username: str, answers: dict
             print('[google_sheets] Нет answerKeys в bot_scenarios — пропускаю запись')
             return
 
-        ws = sh.worksheet(sheet_name)
-
+        # ws уже получен из _resolve_target_sheet выше; продолжаем как было.
         # Find next empty row based on column B (User ID)
         col_b = ws.col_values(2)
         empty_line = len(col_b) + 1
