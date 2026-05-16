@@ -1993,24 +1993,36 @@ async def _send_anketa_screen(user_id: int, screen_id: str, state: FSMContext):
 
 
 async def _anketa_finish(user_id: int, state: FSMContext):
-    """Finish anketa: save answers to Google Sheets and send QR."""
+    """Finish anketa: send QR ASAP, write Google Sheets in background.
+
+    Ранее: ждали Google Sheets (1-3 сек sync gspread) ДО отправки QR.
+    После клика «Подписка есть» юзер видел QR только через 5-6 секунд.
+    Теперь: Sheets-запись фоном через asyncio.create_task, QR улетает сразу.
+    Ошибки записи логируются, но не блокируют флоу.
+    """
+    import time as _t
+    _t_start = _t.monotonic()
+
     data = await state.get_data()
     answers = data.get('anketa_answers', {})
     screen_path = data.get('anketa_screen_path', [])
 
-    try:
-        if answers:
-            user = DB.User.select(user_id)
-            full_name = user.full_name if user else ''
-            username = user.username if user else ''
-            await new_answers(
-                user_id=str(user_id),
-                full_name=full_name,
-                username=username,
-                answers=answers,
-            )
-    except Exception as e:
-        logger.error(f'[anketa-flow] Ошибка отправки в Google Sheets: {e}')
+    if answers:
+        user = DB.User.select(user_id)
+        full_name = user.full_name if user else ''
+        username = user.username if user else ''
+
+        async def _bg_sheets():
+            try:
+                await new_answers(
+                    user_id=str(user_id),
+                    full_name=full_name,
+                    username=username,
+                    answers=answers,
+                )
+            except Exception as e:
+                logger.error(f'[anketa-flow] Ошибка отправки в Google Sheets: {e}')
+        asyncio.create_task(_bg_sheets())
 
     # Сохраняем флаг до очистки state — он мог быть выставлен при входе
     # в анкету через event_v2_want_merch (партнёр уже получил раффл-билет
@@ -2018,12 +2030,25 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     flow_data = await state.get_data()
     skip_promo = bool(flow_data.get('skip_raffle_promo'))
     await state.clear()
+
+    _t_pre_qr = _t.monotonic()
     await _send_event_qr(user_id, is_partner=False)
+    _t_post_qr = _t.monotonic()
+
     if not skip_promo:
         # И сразу отправляем промо регистрации (раффл мячей).
         # Раньше оно слалось только после фактического сканирования QR хостесом
         # на стенде, но юзеру нужно видеть оффер сразу, чтобы успеть поучаствовать.
         await _send_event_registration_promo(user_id)
+    _t_done = _t.monotonic()
+
+    logger.info(
+        f'[ANKETA-FINISH] user={user_id} '
+        f'pre_qr={int((_t_pre_qr - _t_start) * 1000)}ms '
+        f'qr_send={int((_t_post_qr - _t_pre_qr) * 1000)}ms '
+        f'promo={int((_t_done - _t_post_qr) * 1000)}ms '
+        f'total={int((_t_done - _t_start) * 1000)}ms'
+    )
 
 
 async def _send_event_registration_promo(user_id: int):

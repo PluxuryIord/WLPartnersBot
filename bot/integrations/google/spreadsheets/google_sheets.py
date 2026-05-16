@@ -142,16 +142,10 @@ def _resolve_target_sheet(spreadsheet):
         return None, None
 
 
-async def new_answers(user_id: str, full_name: str, username: str, answers: dict):
-    """
-    Save anketa answers to Google Sheets.
-    answers: dict of {answerKey: value}, e.g. {'role': 'Трафик', 'company': 'Acme', 'traffic_type': 'Gambling'}
-    Routing: prefers a sheet named with today's date (DD.MM.YYYY), so the event
-    days 26.05.2026 / 27.05.2026 collect their registrations into separate
-    pre-created sheets automatically. Falls back to anketa_active_sheet
-    (set via admin panel) when no date-named sheet exists.
-    Column mapping is by ORDER of answerKeys from bot_scenarios (not by header name),
-    so Google Sheet can have human-readable Russian titles in header row.
+def _sync_new_answers(user_id: str, full_name: str, username: str, answers: dict):
+    """Sync-вариант new_answers. Все блокирующие gspread-вызовы здесь, чтобы
+    обёртка async-функция могла безопасно прокинуть это в asyncio.to_thread
+    и не блокировать event loop бота на 1-3 секунды записи в Google Sheets.
     """
     try:
         sheet_name, ws = _resolve_target_sheet(sh)
@@ -185,3 +179,16 @@ async def new_answers(user_id: str, full_name: str, username: str, answers: dict
         ws.update(range_name=f'A{empty_line}:{end_col}{empty_line}', values=[row])
     except Exception as e:
         print(f'[google_sheets] Ошибка записи ответов анкеты: {e}')
+
+
+async def new_answers(user_id: str, full_name: str, username: str, answers: dict):
+    """Async wrapper. Прокидывает блокирующий gspread в thread pool —
+    event loop бота свободен для отправки QR и других задач параллельно.
+
+    Routing: prefers a sheet named with today's date (DD.MM.YYYY), so the event
+    days 26.05.2026 / 27.05.2026 collect their registrations into separate
+    pre-created sheets automatically. Falls back to anketa_active_sheet
+    (set via admin panel) when no date-named sheet exists.
+    """
+    import asyncio
+    await asyncio.to_thread(_sync_new_answers, user_id, full_name, username, answers)
