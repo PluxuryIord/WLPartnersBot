@@ -45,6 +45,15 @@ async def main() -> None:
     # Scheduler Tasks
     await start_scheduler_tasks()
 
+    # QR pre-upload health check — verify storage chats are accessible before polling.
+    # Non-fatal: logs warnings if a chat isn't reachable but bot keeps running
+    # (just falls back to on-demand upload for QR-cards).
+    try:
+        from bot.utils.qr_storage import health_check as _qr_storage_health
+        await _qr_storage_health(bot)
+    except Exception as _e:
+        logging.warning(f'[qr-storage] health-check skipped: {_e}')
+
     print(f'Telegram bot: Бот успешно запущен | Bot launched successfully')
 
     # Bot Startup — texts auto-reload every 3s via apscheduler (see apschedule_tasks.py)

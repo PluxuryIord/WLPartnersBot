@@ -175,7 +175,18 @@ def pop_qr_card(code: str) -> Optional[bytes]:
 
 
 async def pregenerate_qr_card(code: str, caption: str = '') -> None:
-    """Отрендерить карточку фоном и положить в кэш. Безопасна к ошибкам."""
+    """Отрендерить карточку фоном.
+
+    Двухуровневая стратегия:
+      1) рендерим PNG локально (pillow)
+      2) если включён pre-upload в служебные чаты (QR_STORAGE_CHATS) —
+         загружаем туда, получаем file_id, сохраняем в MySQL.
+         Дальше _send_event_qr отправит юзеру по file_id (мгновенно).
+      3) ВНЕ зависимости от успеха upload'а, оставляем PNG в memory cache —
+         если file_id не получили, на показе сработает on-demand fallback.
+
+    Безопасна к ошибкам — любые сбои логируем, ничего не блокируем.
+    """
     if not code:
         return
     if code in _pregenerated_cards:
@@ -186,3 +197,14 @@ async def pregenerate_qr_card(code: str, caption: str = '') -> None:
         logger.info(f'[qr-card] pregenerate ok: code={code} size={len(data)//1024}KB')
     except Exception as e:
         logger.warning(f'[qr-card] pregenerate failed for {code}: {e}')
+        return
+
+    # Параллельно: pre-upload в storage chat для получения file_id.
+    # Делаем ПОСЛЕ рендера, в фоне, чтобы upload-задержка не блокировала
+    # последующие _send_event_qr'ы которые могут попасть в memory cache.
+    try:
+        from bot.utils import qr_storage  # type: ignore
+        from bot.utils.announce_bot import bot  # type: ignore
+        await qr_storage.upload_for_file_id(bot, data, code)
+    except Exception as e:
+        logger.warning(f'[qr-card] storage upload failed for {code}: {e}')

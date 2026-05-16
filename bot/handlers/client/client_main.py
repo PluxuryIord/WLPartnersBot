@@ -1766,39 +1766,58 @@ async def _send_event_qr(user_id: int, is_partner: bool = False) -> Message:
     # Промо регистрации придёт отдельным сообщением после скана QR хостес.
     reply_markup = None
 
-    # Render QR card LOCALLY (pillow) instead of fetching from admin panel.
-    # Eliminates the HTTP round-trip + admin-side sharp pipeline.
-    # Тайминги логируем, чтобы видеть РЕАЛЬНОЕ узкое место.
+    # Three-tier fast path:
+    #   1) file_id из storage-чата (мгновенно, без upload файла) — лучший случай
+    #   2) PNG bytes из memory cache (нужен upload, но без рендера)
+    #   3) on-demand render + upload (fallback, как было раньше)
     import time as _t
     from bot.utils.qr_card import generate_qr_card_bytes, pop_qr_card
+    from bot.utils.qr_storage import get_cached_file_id
     from aiogram.types import BufferedInputFile
 
     _t0 = _t.monotonic()
-    # Сначала пробуем cache: pregenerate_qr_card мог уже отрендерить карточку
-    # пока юзер ходил по интро + анкете — тогда здесь работа = 0.
-    card_bytes = pop_qr_card(event_code)
-    _from_cache = card_bytes is not None
-    _t1 = _t.monotonic()
+    _from_cache = 'miss'
+    photo_payload = None
+    _size_kb = -1
+    _render_ms = -1
+
+    # Tier 1: file_id
     try:
-        if card_bytes is None:
-            qr_caption_overlay = _get_qr_caption() or ''
-            card_bytes = await generate_qr_card_bytes(event_code, qr_caption_overlay)
-        _t2 = _t.monotonic()
-        photo_payload = BufferedInputFile(card_bytes, filename=f'{event_code}.png')
-        _render_ms = int((_t2 - _t1) * 1000)
-        _size_kb = len(card_bytes) // 1024
+        file_id = await get_cached_file_id(event_code)
+        if file_id:
+            photo_payload = file_id  # aiogram принимает строку как file_id
+            _from_cache = 'file_id'
     except Exception as _e:
-        # Last-ditch fallback: bare QR via FSInputFile, matches previous behavior.
-        logger.warning(f'[QR-CARD] local render failed, falling back to bare QR: {_e}')
-        qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
-        qr.add_data(event_code)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color='black', back_color='white')
-        qr_path = f"files/{user_id}_card.png"
-        img.save(qr_path)
-        photo_payload = FSInputFile(qr_path)
-        _render_ms = -1
-        _size_kb = -1
+        logger.debug(f'[QR-CARD] file_id lookup failed: {_e}')
+
+    _t1 = _t.monotonic()
+    # Tier 2 + 3: bytes (cache или on-demand)
+    if photo_payload is None:
+        try:
+            card_bytes = pop_qr_card(event_code)
+            if card_bytes is not None:
+                _from_cache = 'bytes'
+            else:
+                qr_caption_overlay = _get_qr_caption() or ''
+                card_bytes = await generate_qr_card_bytes(event_code, qr_caption_overlay)
+                _from_cache = 'on_demand'
+            _t2 = _t.monotonic()
+            photo_payload = BufferedInputFile(card_bytes, filename=f'{event_code}.png')
+            _render_ms = int((_t2 - _t1) * 1000)
+            _size_kb = len(card_bytes) // 1024
+        except Exception as _e:
+            # Last-ditch fallback: bare QR via FSInputFile, matches previous behavior.
+            logger.warning(f'[QR-CARD] local render failed, falling back to bare QR: {_e}')
+            qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
+            qr.add_data(event_code)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color='black', back_color='white')
+            qr_path = f"files/{user_id}_card.png"
+            img.save(qr_path)
+            photo_payload = FSInputFile(qr_path)
+            _from_cache = 'fallback_bare'
+            _render_ms = -1
+            _size_kb = -1
 
     caption = f'<b>Вот ваш QR для получения подарка!</b>'
     if event_code:
