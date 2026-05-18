@@ -1496,6 +1496,44 @@ async def add_user_tag(user_id: int, tag: str) -> None:
         logger.warning(f'[user_tag] add {tag!r} for {user_id} failed: {e}')
 
 
+def _sync_has_user_tag(user_id: int, tag: str) -> bool:
+    _cfg = {
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
+        'database': os.getenv('MYSQL_DATABASE', ''),
+    }
+    c = None
+    try:
+        c = mysql.connector.connect(**_cfg)
+        cur = c.cursor()
+        cur.execute(
+            'SELECT 1 FROM wl_admin_user_tags WHERE user_id=%s AND tag=%s LIMIT 1',
+            (user_id, tag),
+        )
+        return cur.fetchone() is not None
+    except Exception as e:
+        logger.warning(f'[user_tag] read {tag!r} for {user_id} failed: {e}')
+        return False
+    finally:
+        try:
+            if c: c.close()
+        except Exception:
+            pass
+
+
+async def has_user_tag(user_id: int, tag: str) -> bool:
+    try:
+        return await asyncio.to_thread(_sync_has_user_tag, user_id, tag)
+    except Exception:
+        return False
+
+
+# Системный тег: «не выдавать раффл-билет». Ставится в анкете когда роль =
+# Рекламодатель или Другое. Префикс `__` — чтобы маркетинг не путал его с
+# обычными тегами в админ-панели.
+NO_RAFFLE_TAG = '__no_raffle__'
+
+
 # Теги мероприятия по датам. Применяются ТОЛЬКО если сегодня одна из этих
 # дат (МСК). В остальные дни сценарий 3 проходится молча, без тегов.
 EVENT_TAGS_BY_DATE = {
@@ -2026,23 +2064,33 @@ async def _anketa_finish(user_id: int, state: FSMContext):
 
     # Сохраняем флаг до очистки state — он мог быть выставлен при входе
     # в анкету через event_v2_want_merch (партнёр уже получил раффл-билет
-    # и пришёл за мерчем, второй раз про раффл писать не нужно).
+    # и пришёл за мерчем — ему ничего больше показывать не нужно).
     flow_data = await state.get_data()
-    skip_promo = bool(flow_data.get('skip_raffle_promo'))
+    skip_all_promo = bool(flow_data.get('skip_raffle_promo'))
+
+    # Решаем что показать ПОСЛЕ QR в зависимости от роли:
+    #   'Продаю трафик'             → раффл-баннер (с кнопкой → инструкция)
+    #   'Рекламодатель' / 'Другое'  → сразу инструкция без раффла;
+    #                                  плюс ставим тег NO_RAFFLE_TAG, чтобы
+    #                                  потом _award_ticket знал не выдавать билет
+    role_answer = (answers or {}).get('role', '')
+    skip_raffle_for_role = role_answer in ('Рекламодатель', 'Другое')
+    if skip_raffle_for_role:
+        asyncio.create_task(add_user_tag(user_id, NO_RAFFLE_TAG))
+
     await state.clear()
 
     _t_pre_qr = _t.monotonic()
     await _send_event_qr(user_id, is_partner=False)
     _t_post_qr = _t.monotonic()
 
-    if not skip_promo:
-        # UX-пауза: даём юзеру 3 секунды рассмотреть QR-карточку, прежде чем
-        # выскочит следующее сообщение (раффл-промо) и сдвинет её наверх.
+    if not skip_all_promo:
+        # UX-пауза: даём 3 секунды рассмотреть QR прежде чем выскочит следующее.
         await asyncio.sleep(3)
-        # И отправляем промо регистрации (раффл мячей).
-        # Раньше оно слалось только после фактического сканирования QR хостесом
-        # на стенде, но юзеру нужно видеть оффер сразу, чтобы успеть поучаствовать.
-        await _send_event_registration_promo(user_id)
+        if skip_raffle_for_role:
+            await _send_event_registration_instructions(user_id)
+        else:
+            await _send_event_registration_promo(user_id)
     _t_done = _t.monotonic()
 
     logger.info(
@@ -2074,6 +2122,42 @@ async def _send_event_registration_promo(user_id: int):
             pass
     except Exception as e:
         logger.warning(f'[event_registration_promo] failed for {user_id}: {e}')
+
+
+async def _send_event_registration_instructions(user_id: int):
+    """Отправляет экран event_registration_instructions напрямую — минуя
+    раффл-баннер. Используется для ролей «Рекламодатель» / «Другое» в
+    анкете, где розыгрыш мячей не релевантен, но регистрация на платформе
+    — финальный CTA — нужна.
+
+    Текст и клавиатура подтягиваются из bot_scenarios (тот же экран,
+    который открывается из event_v2_registration_instructions при клике
+    «Пройти регистрацию» в раффл-баннере). Можно редактировать в админке
+    без правки кода.
+    """
+    from bot.utils.dynamic_kb import get_screen_kb
+    text = get_text('event_registration_instructions', 'text') or (
+        '<b>Вам нужно перейти на официальный сайт партнерской программы '
+        'и зарегистрироваться.</b>\n\n'
+        'При регистрации укажите следующую информацию:\n'
+        '• имя и фамилию;\n'
+        '• свой email;\n'
+        '• пароль.\n\n'
+        'После заполнения заявки нажмите кнопку «Регистрация» и активируйте '
+        'аккаунт по email.'
+    )
+    kb = get_screen_kb('event_registration_instructions')
+    try:
+        new_msg = await send_screen_message(
+            bot, user_id, 'event_registration_instructions',
+            text=text, reply_markup=kb, message_key='text',
+        )
+        try:
+            DB.User.update(mark=user_id, menu_id=new_msg.message_id)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f'[event_registration_instructions] failed for {user_id}: {e}')
 
 
 async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMContext):

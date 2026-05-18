@@ -598,7 +598,23 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
     # «Не работаю» юзер уже имеет merch event_code → ticket_code = его суффикс.
     # «Работаю» юзер кода не получает (не учитывается в статистике QR) →
     # генерируем независимый ticket_code локально.
-    from bot.handlers.client.client_main import get_user_merch_code
+    from bot.handlers.client.client_main import get_user_merch_code, has_user_tag, NO_RAFFLE_TAG  # type: ignore
+
+    # 0) Юзеру не положен раффл (тег поставлен анкетой при роли
+    #    Рекламодатель/Другое) — не выдаём билет, показываем «Готово».
+    if await has_user_tag(user_id, NO_RAFFLE_TAG):
+        await state.clear()
+        done_text = (
+            '<b>✅ Готово!</b>\n\n'
+            'Ваша регистрация подтверждена, площадка найдена.\n'
+            'Спасибо за регистрацию в WINLINE PARTNERS!'
+        )
+        try:
+            await bot.send_message(user_id, done_text)
+        except TelegramAPIError as e:
+            logger.warning(f'[event_v2] no-raffle done message failed for {user_id}: {e}')
+        return
+
     merch_code = await get_user_merch_code(user_id)
     if merch_code:
         suffix = merch_code.split('EVT-', 1)[-1]
