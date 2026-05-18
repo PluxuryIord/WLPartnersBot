@@ -2029,16 +2029,6 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     # и пришёл за мерчем, второй раз про раффл писать не нужно).
     flow_data = await state.get_data()
     skip_promo = bool(flow_data.get('skip_raffle_promo'))
-
-    # Раффл-промо (розыгрыш мячей) показываем ТОЛЬКО трафик-партнёрам.
-    # Рекламодателям и юзерам из «Другое» эта акция не релевантна.
-    # Соответствие с лейблами кнопок в anketa_role (см. scenarios.js):
-    #   'Продаю трафик' → раффл уместен
-    #   'Рекламодатель' / 'Другое' → скрываем
-    role_answer = (answers or {}).get('role', '')
-    if role_answer in ('Рекламодатель', 'Другое'):
-        skip_promo = True
-
     await state.clear()
 
     _t_pre_qr = _t.monotonic()
