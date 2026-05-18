@@ -1528,6 +1528,34 @@ async def has_user_tag(user_id: int, tag: str) -> bool:
         return False
 
 
+def _sync_remove_user_tag(user_id: int, tag: str) -> None:
+    _cfg = {
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
+        'database': os.getenv('MYSQL_DATABASE', ''),
+    }
+    c = None
+    try:
+        c = mysql.connector.connect(**_cfg)
+        cur = c.cursor()
+        cur.execute('DELETE FROM wl_admin_user_tags WHERE user_id=%s AND tag=%s', (user_id, tag))
+        c.commit()
+    except Exception as e:
+        logger.warning(f'[user_tag] remove {tag!r} for {user_id} failed: {e}')
+    finally:
+        try:
+            if c: c.close()
+        except Exception:
+            pass
+
+
+async def remove_user_tag(user_id: int, tag: str) -> None:
+    try:
+        await asyncio.to_thread(_sync_remove_user_tag, user_id, tag)
+    except Exception:
+        pass
+
+
 # Системный тег: «не выдавать раффл-билет». Ставится в анкете когда роль =
 # Рекламодатель или Другое. Префикс `__` — чтобы маркетинг не путал его с
 # обычными тегами в админ-панели.
@@ -2075,8 +2103,13 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     #                                  потом _award_ticket знал не выдавать билет
     role_answer = (answers or {}).get('role', '')
     skip_raffle_for_role = role_answer in ('Рекламодатель', 'Другое')
+    # Явно синхронизируем тег с текущей ролью. Это важно — если юзер тестирует
+    # на одном TG-аккаунте сначала «Рекламодатель» (тег поставился), а потом
+    # «Продаю трафик» — без снятия он бы получил «Готово» вместо congrats.
     if skip_raffle_for_role:
         asyncio.create_task(add_user_tag(user_id, NO_RAFFLE_TAG))
+    else:
+        asyncio.create_task(remove_user_tag(user_id, NO_RAFFLE_TAG))
 
     await state.clear()
 
