@@ -247,6 +247,10 @@ async def event_v2_partner_yes(call: CallbackQuery, state: FSMContext):
     # and need a way to claim merch). For «Не работаю» the flow goes through
     # _anketa_finish which clears state, so this flag never reaches congrats.
     await state.update_data(event_v2_flow='partner')
+    # Снимаем тег __no_raffle__ если он застрял с прошлого «Не работаю»-теста.
+    # У партнёра анкеты не было — он гарантированно идёт в раффл.
+    from bot.handlers.client.client_main import remove_user_tag, NO_RAFFLE_TAG  # type: ignore
+    asyncio.create_task(remove_user_tag(call.from_user.id, NO_RAFFLE_TAG))
     try:
         await call.message.delete()
     except TelegramAPIError:
@@ -600,9 +604,16 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
     # генерируем независимый ticket_code локально.
     from bot.handlers.client.client_main import get_user_merch_code, has_user_tag, NO_RAFFLE_TAG  # type: ignore
 
-    # 0) Юзеру не положен раффл (тег поставлен анкетой при роли
-    #    Рекламодатель/Другое) — не выдаём билет, показываем «Готово».
-    if await has_user_tag(user_id, NO_RAFFLE_TAG):
+    # Читаем флоу-флаг ДО любых других чеков — он нужен ниже и определяет
+    # должны ли мы вообще обращать внимание на NO_RAFFLE_TAG (тег относится
+    # только к анкете в «Не работаю»-флоу, не к флоу уже-партнёра).
+    flow_data = await state.get_data()
+    is_partner_flow = (flow_data.get('event_v2_flow') == 'partner')
+
+    # NO_RAFFLE_TAG проверяем ТОЛЬКО для не-партнёрского флоу. У партнёра
+    # анкеты не было — тег если и есть, то из прошлого захода в «Не работаю».
+    # Игнорим его — партнёр идёт в полноценный раффл по дизайну.
+    if (not is_partner_flow) and await has_user_tag(user_id, NO_RAFFLE_TAG):
         await state.clear()
         done_text = (
             '<b>✅ Готово!</b>\n\n'
@@ -623,10 +634,7 @@ async def _award_ticket(user_id: int, email: str, state: FSMContext):
         # predictable to a few seconds and known user_id.
         import secrets as _secrets_mod
         suffix = _secrets_mod.token_hex(4).upper()
-    # Capture flow flag BEFORE we clear state — it tells _show_congrats whether
-    # to keep the «🎁 Хочу мерч» button on the final screen.
-    flow_data = await state.get_data()
-    is_partner_flow = (flow_data.get('event_v2_flow') == 'partner')
+    # is_partner_flow уже прочитан выше до проверки NO_RAFFLE_TAG — переиспользуем.
     resp = await _issue_raffle_ticket(user_id, email, event_id=0, ticket_code=suffix)
     await state.clear()
     if not resp:
