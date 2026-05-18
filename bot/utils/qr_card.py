@@ -32,8 +32,8 @@ logger = logging.getLogger('wl_bot')
 # ── Card layout — те же пропорции, что у админской карточки ───────────────
 CARD_W = 530
 CARD_H = 800
-QR_SIZE = 320
-QR_TOP = 200
+QR_SIZE = 420  # был 320 — стал крупнее по запросу
+QR_TOP = 180   # слегка выше, чтобы под bigger-QR хватило места под caption
 QR_COLOR = (255, 106, 19)  # #FF6A13 — Winline orange
 FONT_SIZE = 72
 LINE_GAP = 16
@@ -100,17 +100,34 @@ def _generate_sync(code: str, caption: str) -> bytes:
     # Copy bg to avoid mutating the cached image.
     bg = _template_bg.copy()
 
-    # Generate QR (orange on transparent), resize, paste.
+    # Generate QR (orange on transparent).
+    # — border=0: тихая зона не нужна, чёрный фон карточки сам по себе margin
+    # — box_size подбираем под QR_SIZE: рендерим в integer-multiple от modules,
+    #   потом NEAREST-resize → пиксели остаются чёткими без LANCZOS-сглаживания
+    #   (то что выглядело как «обводка» на модулях).
     qr = qrcode.QRCode(
         version=None,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=10,
-        border=2,
+        box_size=1,
+        border=0,
     )
     qr.add_data(code)
     qr.make(fit=True)
-    qr_img = qr.make_image(fill_color=QR_COLOR, back_color=(0, 0, 0, 0)).convert('RGBA')
-    qr_img = qr_img.resize((QR_SIZE, QR_SIZE), Image.LANCZOS)
+    modules = qr.modules_count  # e.g. 25 для коротких EVT-кодов
+    # Считаем box_size так, чтобы native-size был как можно ближе и >= QR_SIZE,
+    # затем NEAREST → даунскейл с сохранением четких пиксельных границ.
+    box_size = max(1, (QR_SIZE + modules - 1) // modules)  # ceil div
+    qr2 = qrcode.QRCode(
+        version=qr.version,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=box_size,
+        border=0,
+    )
+    qr2.add_data(code)
+    qr2.make(fit=True)
+    qr_img = qr2.make_image(fill_color=QR_COLOR, back_color=(0, 0, 0, 0)).convert('RGBA')
+    if qr_img.size[0] != QR_SIZE:
+        qr_img = qr_img.resize((QR_SIZE, QR_SIZE), Image.NEAREST)
     bg.paste(qr_img, ((CARD_W - QR_SIZE) // 2, QR_TOP), qr_img)
 
     # Caption under the QR, centered vertically in the remaining space.
