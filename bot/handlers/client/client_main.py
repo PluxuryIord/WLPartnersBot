@@ -1488,12 +1488,52 @@ def _sync_add_user_tag(user_id: int, tag: str) -> None:
             pass
 
 
+def _sync_has_user_tag(user_id: int, tag: str) -> bool:
+    """Check whether wl_admin_user_tags has (user_id, tag). Sync MySQL call."""
+    _cfg = {
+        'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+        'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
+        'database': os.getenv('MYSQL_DATABASE', ''),
+    }
+    c = None
+    try:
+        c = mysql.connector.connect(**_cfg)
+        cur = c.cursor()
+        cur.execute(
+            'SELECT 1 FROM wl_admin_user_tags WHERE user_id = %s AND tag = %s LIMIT 1',
+            (user_id, tag),
+        )
+        return cur.fetchone() is not None
+    except Exception as e:
+        logger.warning(f'[user_tag] read {tag!r} for {user_id} failed: {e}')
+        return False
+    finally:
+        try:
+            if c: c.close()
+        except Exception:
+            pass
+
+
 async def add_user_tag(user_id: int, tag: str) -> None:
     """Async, non-blocking. Use as `asyncio.create_task(add_user_tag(...))`."""
     try:
         await asyncio.to_thread(_sync_add_user_tag, user_id, tag)
     except Exception as e:
         logger.warning(f'[user_tag] add {tag!r} for {user_id} failed: {e}')
+
+
+async def has_user_tag(user_id: int, tag: str) -> bool:
+    """Async wrapper for the sync check."""
+    try:
+        return await asyncio.to_thread(_sync_has_user_tag, user_id, tag)
+    except Exception:
+        return False
+
+
+# Системный тег: «этому юзеру не выдавать раффл-билет». Ставится анкетой
+# когда роль = Рекламодатель/Другое. Префикс `__` чтобы маркетинг не путал
+# с обычными тегами в админ-панели.
+NO_RAFFLE_TAG = '__no_raffle__'
 
 
 # Теги мероприятия по датам. Применяются ТОЛЬКО если сегодня одна из этих
@@ -2039,6 +2079,11 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     #   skip_all_promo               → вообще ничего больше не шлём (уже-партнёр пришёл за мерчем)
     role_answer = (answers or {}).get('role', '')
     skip_raffle_for_role = role_answer in ('Рекламодатель', 'Другое')
+    if skip_raffle_for_role:
+        # Помечаем юзера системным тегом — _award_ticket позже проверит и
+        # не будет выдавать раффл-билет (вместо congrats с номером показывает
+        # короткое «всё готово»-сообщение).
+        asyncio.create_task(add_user_tag(user_id, NO_RAFFLE_TAG))
 
     await state.clear()
 
