@@ -391,78 +391,24 @@ async def reload_texts(request):
 # ── POST /event/merch-given ──────────────────────────────────────────────────
 
 async def event_merch_given(request):
-    """Send registration promo to user after merch QR was scanned by hostess.
+    """Hostess scanned the merch QR at the stand.
 
-    Body: {"user_id": <telegram_id>}
-    Pulls scenario text + buttons from bot_scenarios for screen
-    `event_registration_promo` and sends via Telegram HTTP API.
+    Эндпоинт остаётся для backward-compat (админка вызывает его при скане),
+    но больше НЕ шлёт раффл-промо пользователю. Раньше шёл:
+        анкета → merch QR → ...ждём скан... → этот endpoint шлёт промо.
+    Сейчас раффл-промо уже отправляется в _anketa_finish сразу после QR
+    (для трафик-партнёров; для Рекламодатель/Другое его вообще нет).
+    Вторичный пуш после скана дублировал бы сообщение трафик-партнёрам
+    и неуместно появлялся бы у Рекламодатель/Другое.
+
+    Поведение: принимаем запрос, ничего не шлём, отдаём ok.
     """
     try:
         body = await request.json()
         user_id = int(body.get('user_id') or 0)
         if not user_id:
             return cors_headers(web.json_response({'error': 'user_id is required'}, status=400))
-
-        # Gate by raffle_hidden setting — when on, registration promo не отправляем
-        try:
-            import json as _json_mod, os as _os, mysql.connector as _mc
-            _conn = _mc.connect(
-                host=_os.getenv('MYSQL_HOST', ''), port=int(_os.getenv('MYSQL_PORT', 3306)),
-                user=_os.getenv('MYSQL_USER', ''), password=_os.getenv('MYSQL_PASSWORD', ''),
-                database=_os.getenv('MYSQL_DATABASE', ''),
-            )
-            try:
-                _cur = _conn.cursor(dictionary=True)
-                _cur.execute("SELECT data FROM texts WHERE category='event_settings' LIMIT 1")
-                _row = _cur.fetchone()
-                if _row and _row.get('data'):
-                    _d = _row['data']
-                    _s = _json_mod.loads(_d) if isinstance(_d, str) else _d
-                    if _s and _s.get('raffle_hidden'):
-                        return cors_headers(web.json_response({'ok': True, 'skipped': 'raffle_hidden'}))
-            finally:
-                _conn.close()
-        except Exception:
-            pass
-
-        from bot.utils.scenario_texts import get_text
-        from bot.utils.dynamic_kb import get_screen_kb
-
-        text = get_text('event_registration_promo', 'promo') or (
-            '<b>Хочешь выиграть 1 из 10 мячей, подписанным легендой '
-            'футбола и амбассадором WINLINE, Роналдиньо?</b>\n\n'
-            'Пройди регистрацию на сайте WINLINE PARTNERS'
-        )
-        kb_obj = get_screen_kb('event_registration_promo')
-        # InlineKeyboardMarkup → dict for Telegram HTTP API
-        reply_markup = None
-        if kb_obj is not None:
-            reply_markup = kb_obj.model_dump(exclude_none=True) if hasattr(kb_obj, 'model_dump') else kb_obj.dict(exclude_none=True)
-
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                'chat_id': user_id,
-                'text': text,
-                'parse_mode': 'HTML',
-            }
-            if reply_markup:
-                import json as _json
-                payload['reply_markup'] = _json.dumps(reply_markup)
-            async with session.post(f'{TELEGRAM_API}/sendMessage', data=payload,
-                                    timeout=aiohttp.ClientTimeout(total=10)) as r:
-                resp_data = await r.json()
-                if not resp_data.get('ok'):
-                    return cors_headers(web.json_response(
-                        {'error': resp_data.get('description', 'Telegram error')}, status=500))
-                # Update user's menu_id so back-buttons clean up correctly
-                msg_id = resp_data.get('result', {}).get('message_id')
-                if msg_id:
-                    try:
-                        DB.User.update(mark=user_id, menu_id=msg_id)
-                    except Exception:
-                        pass
-
-        return cors_headers(web.json_response({'ok': True}))
+        return cors_headers(web.json_response({'ok': True, 'skipped': 'promo_already_sent_in_anketa_flow'}))
     except Exception as e:
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
