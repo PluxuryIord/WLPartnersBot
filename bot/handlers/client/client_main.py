@@ -2101,8 +2101,20 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     #   'Рекламодатель' / 'Другое'  → сразу инструкция без раффла;
     #                                  плюс ставим тег NO_RAFFLE_TAG, чтобы
     #                                  потом _award_ticket знал не выдавать билет
-    role_answer = (answers or {}).get('role', '')
-    skip_raffle_for_role = role_answer in ('Рекламодатель', 'Другое')
+    role_answer = (answers or {}).get('role', '') or ''
+    # Проверка по подстроке lowercased — устойчиво к лёгким правкам лейблов
+    # в админке (например «Рекламодатель WL», «Я рекламодатель», «🏢 Другое»).
+    role_lc = role_answer.lower().strip()
+    skip_raffle_for_role = (
+        ('реклам' in role_lc) or
+        role_lc.startswith('друг')
+    )
+    logger.info(
+        f'[anketa-finish] user={user_id} role={role_answer!r} '
+        f'skip_raffle_for_role={skip_raffle_for_role} '
+        f'all_answer_keys={list((answers or {}).keys())}'
+    )
+
     # Явно синхронизируем тег с текущей ролью. Это важно — если юзер тестирует
     # на одном TG-аккаунте сначала «Рекламодатель» (тег поставился), а потом
     # «Продаю трафик» — без снятия он бы получил «Готово» вместо congrats.
