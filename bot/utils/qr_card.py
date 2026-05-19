@@ -112,7 +112,11 @@ def _generate_sync(code: str, caption: str) -> bytes:
     #      quiet zone за пределами bitmap'а.
     #   4) Error correction = H (30%) — максимум, чтобы прощать дефекты
     #      и сжатие при печати/отображении.
-    BORDER_MODULES = 4
+    # Минимальный border по QR-спецификации = 4 модуля, но карточка вокруг QR
+    # чёрная и сама по себе расширяет quiet zone далеко за пределы bitmap'а.
+    # 2 модуля внутри изображения даёт визуально меньше «рамки» вокруг
+    # данных QR при том же сохранении читаемости (помогает errorCorrection='H').
+    BORDER_MODULES = 2
 
     qr0 = qrcode.QRCode(
         version=None,
