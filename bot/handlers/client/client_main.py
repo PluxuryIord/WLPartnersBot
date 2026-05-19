@@ -2117,13 +2117,13 @@ async def _anketa_finish(user_id: int, state: FSMContext):
     await _send_event_qr(user_id, is_partner=False)
     _t_post_qr = _t.monotonic()
 
-    if not skip_all_promo:
-        # UX-пауза: даём 3 секунды рассмотреть QR прежде чем выскочит следующее.
+    # Раффл-баннер (и любые follow-up сообщения) шлём ТОЛЬКО трафик-партнёрам.
+    # Рекламодатель/Другое — флоу заканчивается на QR-карточке, ничего больше
+    # не присылаем (по бизнес-требованию).
+    if not skip_all_promo and not skip_raffle_for_role:
+        # UX-пауза: даём 3 секунды рассмотреть QR прежде чем выскочит раффл.
         await asyncio.sleep(3)
-        if skip_raffle_for_role:
-            await _send_event_registration_instructions(user_id)
-        else:
-            await _send_event_registration_promo(user_id)
+        await _send_event_registration_promo(user_id)
     _t_done = _t.monotonic()
 
     logger.info(
@@ -2155,42 +2155,6 @@ async def _send_event_registration_promo(user_id: int):
             pass
     except Exception as e:
         logger.warning(f'[event_registration_promo] failed for {user_id}: {e}')
-
-
-async def _send_event_registration_instructions(user_id: int):
-    """Отправляет экран event_registration_instructions напрямую — минуя
-    раффл-баннер. Используется для ролей «Рекламодатель» / «Другое» в
-    анкете, где розыгрыш мячей не релевантен, но регистрация на платформе
-    — финальный CTA — нужна.
-
-    Текст и клавиатура подтягиваются из bot_scenarios (тот же экран,
-    который открывается из event_v2_registration_instructions при клике
-    «Пройти регистрацию» в раффл-баннере). Можно редактировать в админке
-    без правки кода.
-    """
-    from bot.utils.dynamic_kb import get_screen_kb
-    text = get_text('event_registration_instructions', 'text') or (
-        '<b>Вам нужно перейти на официальный сайт партнерской программы '
-        'и зарегистрироваться.</b>\n\n'
-        'При регистрации укажите следующую информацию:\n'
-        '• имя и фамилию;\n'
-        '• свой email;\n'
-        '• пароль.\n\n'
-        'После заполнения заявки нажмите кнопку «Регистрация» и активируйте '
-        'аккаунт по email.'
-    )
-    kb = get_screen_kb('event_registration_instructions')
-    try:
-        new_msg = await send_screen_message(
-            bot, user_id, 'event_registration_instructions',
-            text=text, reply_markup=kb, message_key='text',
-        )
-        try:
-            DB.User.update(mark=user_id, menu_id=new_msg.message_id)
-        except Exception:
-            pass
-    except Exception as e:
-        logger.warning(f'[event_registration_instructions] failed for {user_id}: {e}')
 
 
 async def _start_event_anketa_legacy(message: Message, user_id: int, state: FSMContext):
