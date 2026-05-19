@@ -2148,7 +2148,25 @@ async def _anketa_finish(user_id: int, state: FSMContext):
 
 
 async def _send_event_registration_promo(user_id: int):
-    """Отправляет экран event_registration_promo (раффл-промо)."""
+    """Отправляет экран event_registration_promo (раффл-промо).
+
+    Универсальная защита: если у юзера стоит NO_RAFFLE_TAG (Рекламодатель/
+    Другое), просто не шлём ничего. Это страховка на случай если какой-то
+    из колл-сайтов забыл проверить роль самостоятельно — в любом случае
+    тегированный юзер не должен видеть раффл-промо.
+    """
+    # Логируем кто и откуда вызвал — поможет найти неучтённый колл-сайт.
+    import traceback as _tb
+    _caller = _tb.extract_stack(limit=3)[-2]
+    logger.info(
+        f'[send_event_registration_promo] user={user_id} '
+        f'caller={_caller.name}@{_caller.filename.split("/")[-1]}:{_caller.lineno}'
+    )
+
+    if await has_user_tag(user_id, NO_RAFFLE_TAG):
+        logger.info(f'[send_event_registration_promo] user={user_id} has NO_RAFFLE_TAG, skipping')
+        return
+
     from bot.utils.dynamic_kb import get_screen_kb
     text = get_text('event_registration_promo', 'promo') or (
         '<b>Хочешь выиграть 1 из 10 мячей, подписанным легендой '
