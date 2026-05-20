@@ -174,12 +174,15 @@ user_role = create_inline([
 ], 1)
 
 user_traff = create_inline([
-    ['аso/seo', 'call', 'pick:traff:аso/seo'],
-    ['push/pop', 'call', 'pick:traff:push/pop'],
+    ['SEO', 'call', 'pick:traff:SEO'],
+    ['ASO', 'call', 'pick:traff:ASO'],
+    ['SMS', 'call', 'pick:traff:SMS'],
+    ['PUSH', 'call', 'pick:traff:PUSH'],
+    ['IN APP', 'call', 'pick:traff:IN APP'],
+    ['pop', 'call', 'pick:traff:pop'],
     ['ppc', 'call', 'pick:traff:ppc'],
     ['social', 'call', 'pick:traff:social'],
-    ['in-app', 'call', 'pick:traff:in-app'],
-    ['E-mail / SMS', 'call', 'pick:traff:E-mail / SMS'],
+    ['E-mail', 'call', 'pick:traff:E-mail'],
     ['other', 'call', 'pick:traff:other'],
 ], 3)
 
