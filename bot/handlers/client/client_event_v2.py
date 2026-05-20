@@ -79,14 +79,17 @@ async def _show_screen(user_id: int, screen_id: str, fallback: str = '', state: 
 
 
 async def _has_active_site(email: str) -> bool:
-    """Проверка: есть ли у юзера хотя бы одна одобренная площадка на платформе."""
+    """Есть ли у юзера площадка, которая засчитывается для event-флоу.
+    Засчитываются status=1 (активна) и status=2 (на модерации) — иначе
+    свежезарегистрированный партнёр зависает на «нет площадки», пока
+    модераторы не одобрят, и весь сценарий ломается."""
     try:
         info = await get_user_by_email(email)
         uid = info.get('id') if info else None
         if not uid:
             return False
         sites = await get_user_websites(int(uid), email) or []
-        return any(s.get('status') == 1 for s in sites)
+        return any(s.get('status') in (1, 2) for s in sites)
     except Exception as e:
         logger.warning(f'[event_v2] site check failed for {email}: {e}')
         return False
