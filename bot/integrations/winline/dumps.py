@@ -34,6 +34,7 @@ ENDPOINT = os.getenv('WL_DUMPS_S3_ENDPOINT', 'https://s3.twcstorage.ru')
 BUCKET = os.getenv('WL_DUMPS_S3_BUCKET', '')
 ACCESS_KEY = os.getenv('WL_DUMPS_S3_KEY', '')
 SECRET_KEY = os.getenv('WL_DUMPS_S3_SECRET', '')
+REGION = os.getenv('WL_DUMPS_S3_REGION', '')
 PREFIX = (os.getenv('WL_DUMPS_S3_PREFIX', 'test1/') or 'test1/').rstrip('/') + '/'
 CACHE_TTL_SEC = int(os.getenv('WL_DUMPS_CACHE_TTL', '3600') or 3600)
 
@@ -50,11 +51,14 @@ _lock = asyncio.Lock()
 
 def _client():
     import boto3  # lazy
-    return boto3.client(
-        's3', endpoint_url=ENDPOINT,
+    kwargs = dict(
+        endpoint_url=ENDPOINT,
         aws_access_key_id=ACCESS_KEY,
         aws_secret_access_key=SECRET_KEY,
     )
+    if REGION:
+        kwargs['region_name'] = REGION
+    return boto3.client('s3', **kwargs)
 
 
 def _list_keys(name: str) -> list[str]:
