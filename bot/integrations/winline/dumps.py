@@ -35,7 +35,10 @@ BUCKET = os.getenv('WL_DUMPS_S3_BUCKET', '')
 ACCESS_KEY = os.getenv('WL_DUMPS_S3_KEY', '')
 SECRET_KEY = os.getenv('WL_DUMPS_S3_SECRET', '')
 REGION = os.getenv('WL_DUMPS_S3_REGION', '')
-PREFIX = (os.getenv('WL_DUMPS_S3_PREFIX', 'test1/') or 'test1/').rstrip('/') + '/'
+# Empty prefix = объекты лежат прямо в корне бакета (как в новом
+# wldp-admon-export). Любое непустое значение нормализуется с trailing «/».
+_raw_prefix = os.getenv('WL_DUMPS_S3_PREFIX', '')
+PREFIX = (_raw_prefix.rstrip('/') + '/') if _raw_prefix else ''
 CACHE_TTL_SEC = int(os.getenv('WL_DUMPS_CACHE_TTL', '3600') or 3600)
 
 
