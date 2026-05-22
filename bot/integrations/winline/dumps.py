@@ -340,20 +340,25 @@ async def get_user_stats(user_id: int, start_iso: str, end_iso: str) -> Optional
         except Exception as e:
             logger.warning(f'[WL] conversions aggregation failed: {e}')
 
-    # 2) stats_group_by fallback for dates not covered by conversions
+    # 2) stats_group_by: clicks берём по всему периоду (их нет в conversions,
+    # дублирования нет); остальные метрики — только для дат, не покрытых
+    # conversions, чтобы не дублировать goals/rewards.
     df = await _get('stats_group_by')
     if df is not None and not df.empty:
-        sub = df[
+        base = df[
             (df['userId'] == int(user_id))
             & (df['datetz'].astype(str) >= start_d.isoformat())
             & (df['datetz'].astype(str) <= end_d.isoformat())
         ]
-        if covered:
-            sub = sub[~sub['datetz'].astype(str).isin(covered)]
+        if 'clicks' in base.columns and not base.empty:
+            try:
+                totals['clicks'] = int(base['clicks'].fillna(0).sum())
+            except (TypeError, ValueError):
+                pass
+        sub = base[~base['datetz'].astype(str).isin(covered)] if covered else base
         if not sub.empty:
             for m in ('goal11Quantity', 'goal12Quantity', 'goal13Quantity',
-                      'rewardConfirmed', 'rewardCreated', 'rewardCanceled',
-                      'clicks'):
+                      'rewardConfirmed', 'rewardCreated', 'rewardCanceled'):
                 if m in sub.columns:
                     try:
                         totals[m] += int(sub[m].fillna(0).sum())
