@@ -326,7 +326,8 @@ async def get_user_stats(user_id: int, start_iso: str, end_iso: str) -> Optional
         return None
 
     totals = {'goal11Quantity': 0, 'goal12Quantity': 0, 'goal13Quantity': 0,
-              'rewardConfirmed': 0, 'rewardCreated': 0, 'rewardCanceled': 0}
+              'rewardConfirmed': 0, 'rewardCreated': 0, 'rewardCanceled': 0,
+              'clicks': 0}
 
     # 1) conversions (preferred)
     covered: set[str] = set()
@@ -351,13 +352,13 @@ async def get_user_stats(user_id: int, start_iso: str, end_iso: str) -> Optional
             sub = sub[~sub['datetz'].astype(str).isin(covered)]
         if not sub.empty:
             for m in ('goal11Quantity', 'goal12Quantity', 'goal13Quantity',
-                      'rewardConfirmed', 'rewardCreated', 'rewardCanceled'):
+                      'rewardConfirmed', 'rewardCreated', 'rewardCanceled',
+                      'clicks'):
                 if m in sub.columns:
                     try:
                         totals[m] += int(sub[m].fillna(0).sum())
                     except (TypeError, ValueError):
                         pass
 
-    # clicks intentionally absent — caller fills it from API
-    totals['clicks'] = 0
+    totals.setdefault('clicks', 0)
     return totals

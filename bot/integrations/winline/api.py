@@ -381,9 +381,8 @@ async def get_user_websites(user_id: int, user_email: str | None = None) -> list
 
 
 async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
-    """Aggregated metrics for the period. In s3 mode reads 6 metrics from
-    dumps and pulls clicks from API (clicks are not present in the dump).
-    """
+    """Aggregated metrics for the period. In s3 mode all 7 metrics
+    (including clicks) come from the stats_group_by dump."""
     if _use_dumps():
         from . import dumps
         try:
@@ -392,13 +391,6 @@ async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
             logger.warning(f'[WL] dumps.get_user_stats failed: {e}')
             totals = None
         if totals is not None:
-            # Pull clicks from API and patch in.
-            try:
-                api_totals = await _get_user_stats_api(user_id, start, end)
-                if api_totals:
-                    totals['clicks'] = int(api_totals.get('clicks') or 0)
-            except Exception as e:
-                logger.warning(f'[WL] clicks fallback fetch failed: {e}')
             return totals
         logger.info(f'[WL] dumps miss for stats user_id={user_id}, falling back to api')
     return await _get_user_stats_api(user_id, start, end)
