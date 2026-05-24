@@ -319,7 +319,14 @@ async def _get_user_stats_api(user_id: int, start: str, end: str) -> Optional[di
     return totals
 
 
-# ── Data-source dispatch (api ↔ S3 dumps) ─────────────────────────────────
+# ── Data-source dispatch (api ↔ S3 dumps ↔ MySQL db_admon) ────────────────
+#
+# WL_DATA_SOURCE values:
+#   api  — call Winline's GraphQL directly (default, legacy)
+#   s3   — pandas-in-memory reader over parquet dumps (legacy, kept for rollback)
+#   db   — SQL reader over wl_admon_* tables populated by wl_admon_loader
+# On a miss (configured backend has no record for this user), we always
+# fall back to the live API so freshly-registered users aren't stranded.
 
 WL_DATA_SOURCE = (os.getenv('WL_DATA_SOURCE', 'api') or 'api').strip().lower()
 
@@ -335,13 +342,35 @@ def _use_dumps() -> bool:
         return False
 
 
+def _use_db() -> bool:
+    if WL_DATA_SOURCE != 'db':
+        return False
+    try:
+        from . import db_admon  # noqa: F401
+        return db_admon.is_configured()
+    except Exception as e:
+        logger.warning(f'[WL] db_admon import failed, falling back to api: {e}')
+        return False
+
+
 async def get_user_by_email(email: str) -> Optional[dict]:
     """Public entrypoint. Returns user profile dict or None.
 
-    Switches between live API and S3 dumps based on WL_DATA_SOURCE env.
-    On S3 miss, falls back to API so freshly-registered users are not stranded.
+    Switches between live API, S3 dumps and MySQL (db_admon) based on
+    WL_DATA_SOURCE. On miss in either dump backend, falls back to API
+    so freshly-registered users aren't stranded.
     """
-    if _use_dumps():
+    if _use_db():
+        from . import db_admon
+        try:
+            user = await db_admon.get_user_by_email(email)
+        except Exception as e:
+            logger.warning(f'[WL] db_admon.get_user_by_email failed: {e}')
+            user = None
+        if user:
+            return user
+        logger.info(f'[WL] db miss for email={email}, falling back to api')
+    elif _use_dumps():
         from . import dumps
         try:
             user = await dumps.get_user_by_email(email)
@@ -355,7 +384,17 @@ async def get_user_by_email(email: str) -> Optional[dict]:
 
 
 async def get_user_websites(user_id: int, user_email: str | None = None) -> list[dict]:
-    if _use_dumps():
+    if _use_db():
+        from . import db_admon
+        try:
+            sites = await db_admon.get_user_websites(user_id)
+        except Exception as e:
+            logger.warning(f'[WL] db_admon.get_user_websites failed: {e}')
+            sites = []
+        if sites:
+            return sites
+        logger.info(f'[WL] db miss for websites user_id={user_id}, falling back to api')
+    elif _use_dumps():
         from . import dumps
         try:
             sites = await dumps.get_user_websites(user_id)
@@ -369,9 +408,19 @@ async def get_user_websites(user_id: int, user_email: str | None = None) -> list
 
 
 async def get_user_stats(user_id: int, start: str, end: str) -> Optional[dict]:
-    """Aggregated metrics for the period. In s3 mode all 7 metrics
-    (including clicks) come from the stats_group_by dump."""
-    if _use_dumps():
+    """Aggregated metrics for the period. db/s3 modes deliver all 7 metrics
+    (incl. clicks) without touching Winline's API."""
+    if _use_db():
+        from . import db_admon
+        try:
+            totals = await db_admon.get_user_stats(user_id, start, end)
+        except Exception as e:
+            logger.warning(f'[WL] db_admon.get_user_stats failed: {e}')
+            totals = None
+        if totals is not None:
+            return totals
+        logger.info(f'[WL] db miss for stats user_id={user_id}, falling back to api')
+    elif _use_dumps():
         from . import dumps
         try:
             totals = await dumps.get_user_stats(user_id, start, end)

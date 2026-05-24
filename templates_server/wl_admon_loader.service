@@ -1,0 +1,16 @@
+[Unit]
+Description=WLPartners Admon S3 → MySQL loader
+After=syslog.target
+After=network.target
+After=mysql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/WLPartners/
+ExecStart=/root/WLPartners/venv/bin/python3 wl_admon_loader.py
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
