@@ -112,9 +112,22 @@ def _read_parquet(s3, key: str):
 
 # ─── MySQL helpers ─────────────────────────────────────────────────────────
 
+from contextlib import contextmanager
+
+
+@contextmanager
 def _raw_conn():
-    """pymysql connection via SQLAlchemy's engine pool. Use as context manager."""
-    return mysql_engine.raw_connection()
+    """pymysql connection via SQLAlchemy's engine pool.
+
+    SQLAlchemy's raw_connection() returns a _ConnectionFairy that does NOT
+    implement __enter__/__exit__ (only .close()), so we wrap it ourselves
+    to guarantee the connection returns to the pool even on errors.
+    """
+    conn = mysql_engine.raw_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _ingested_keys(table: str) -> set[str]:
