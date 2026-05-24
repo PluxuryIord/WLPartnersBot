@@ -157,9 +157,13 @@ def _clear_ingested(table: str) -> None:
 
 
 def _truncate(table: str) -> None:
+    """Wipe a snapshot table before reloading. Uses DELETE rather than
+    TRUNCATE because the bot's MySQL user has DML rights but not DROP
+    (TRUNCATE requires DROP). Tables are small (~14k rows max) so the
+    perf gap is invisible."""
     with _raw_conn() as conn:
         cur = conn.cursor()
-        cur.execute(f"TRUNCATE TABLE wl_admon_{table}")
+        cur.execute(f"DELETE FROM wl_admon_{table}")
         conn.commit()
 
 
