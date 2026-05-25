@@ -22,6 +22,28 @@ BOT_TOKEN = env.str('TG_TOKEN')
 TELEGRAM_API = f'https://api.telegram.org/bot{BOT_TOKEN}'
 IAP_ADMIN_TOKEN = env.str('IAP_ADMIN_TOKEN', '')
 
+# В РФ-регионе api.telegram.org заблокирован — нужен прокси (тот же что
+# использует основной бот для polling). aiohttp_socks даёт SOCKS5/HTTP-
+# коннектор; если TG_PROXY_URL не задан, ходим напрямую как раньше.
+TG_PROXY_URL = env.str('TG_PROXY_URL', '')
+
+
+def _telegram_session(timeout_sec: int = 60):
+    """Возвращает aiohttp.ClientSession, маршрутизирующий запросы к
+    api.telegram.org через TG_PROXY_URL, если он задан. Используется в
+    /telegram/relay — раньше там был «голый» ClientSession без прокси,
+    из-за чего relay молча падал по таймауту, а в очередь рассылок
+    сыпались `last_error_msg='relay: '`."""
+    timeout = aiohttp.ClientTimeout(total=timeout_sec)
+    if TG_PROXY_URL:
+        try:
+            from aiohttp_socks import ProxyConnector
+            connector = ProxyConnector.from_url(TG_PROXY_URL)
+            return aiohttp.ClientSession(connector=connector, timeout=timeout)
+        except Exception as e:
+            print(f'[admin_api] TG_PROXY_URL configured but ProxyConnector failed: {e} — going direct')
+    return aiohttp.ClientSession(timeout=timeout)
+
 # Add bot root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -440,9 +462,8 @@ async def telegram_relay(request):
     file = body.get('file')
     files = body.get('files')
 
-    timeout = aiohttp.ClientTimeout(total=60)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with _telegram_session(timeout_sec=60) as session:
             if file or files:
                 form = aiohttp.FormData()
                 # Stringify non-string params (Telegram accepts strings in multipart)
