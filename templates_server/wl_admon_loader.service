@@ -9,8 +9,25 @@ Type=simple
 User=root
 WorkingDirectory=/root/WLPartners/
 ExecStart=/root/WLPartners/venv/bin/python3 wl_admon_loader.py
-RestartSec=10
-Restart=always
+
+# Не рестартить если процесс выгнали SIGTERM/SIGKILL (systemctl stop, OOM-killer):
+# при OOM с Restart=always получался цикл «загружаюсь → жру всё → ядро бьёт →
+# рестарт → опять жру всё», и SSH не успевал даже handshake завершить.
+Restart=on-failure
+RestartSec=300
+
+# Ресурсные лимиты: пусть loader живёт в своей песочнице и не утаскивает
+# с собой бота, MySQL-клиент и sshd, если вдруг сорвётся.
+MemoryHigh=1G
+MemoryMax=2G
+CPUWeight=20
+Nice=15
+
+# Корректное завершение: даём 30 сек на graceful (loader честно ловит SIGTERM
+# в коде и доделывает текущий тик), потом убиваем форсом.
+KillSignal=SIGTERM
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
+
