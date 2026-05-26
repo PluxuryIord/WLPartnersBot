@@ -83,17 +83,38 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
 
     # Все кнопки теперь живут в сценариях (main_menu) — админ может их
     # переименовывать/переупорядочивать. Здесь скрываем условные.
-    # «Я на мероприятии!» (client_at_event) исторически прятали — теперь
-    # снова показываем, deeplink /start=event и кнопка ведут в один и тот
-    # же event-v2 flow.
     skip_actions = []
     if not show_ai:
         skip_actions.append('client_ask_ai')
     if not is_admin:
         skip_actions.append('admin_menu')
 
-    kb = get_screen_kb_filtered('main_menu', skip_actions=skip_actions)
+    # «Я на мероприятии!» (client_at_event) шьём из кода: в сценариях её
+    # сейчас нет и попытка добавить через JSON_SET не зашла. Если когда-то
+    # появится в DB-сценариях — get_screen_kb_filtered отрендерит её сам,
+    # а наш extra-инжект ниже становится дубликатом — поэтому проверяем.
+    db_has_event = False
+    try:
+        from bot.utils.dynamic_kb import _cache as _scenarios_cache, _load as _scenarios_load
+        _data = _scenarios_cache.get('data') or _scenarios_load()
+        _mm = (_data.get('screens') or {}).get('main_menu') or {}
+        db_has_event = 'btn_at_event' in (_mm.get('buttons') or {})
+    except Exception:
+        pass
+
+    extra_buttons = None if db_has_event else [
+        ['🎉 Я на мероприятии!', 'call', 'client_at_event'],
+    ]
+
+    kb = get_screen_kb_filtered('main_menu', extra_buttons=extra_buttons, skip_actions=skip_actions)
     if kb:
+        # Если админ — admin_menu отрендерился последним, а наш event-button
+        # ушёл вообще под ним. Меняем местами две последние строки, чтобы
+        # «Меню администратора» осталось финальным элементом меню.
+        if is_admin and extra_buttons and len(kb.inline_keyboard) >= 2:
+            kb.inline_keyboard[-1], kb.inline_keyboard[-2] = (
+                kb.inline_keyboard[-2], kb.inline_keyboard[-1]
+            )
         return kb
 
     # Fallback
