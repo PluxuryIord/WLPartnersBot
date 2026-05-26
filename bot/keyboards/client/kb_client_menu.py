@@ -82,8 +82,11 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
     show_ai = user_id is not None and is_user_allowed(user_id)
 
     # Все кнопки теперь живут в сценариях (main_menu) — админ может их
-    # переименовывать/переупорядочивать. Здесь скрываем условные:
-    skip_actions = ['client_at_event']
+    # переименовывать/переупорядочивать. Здесь скрываем условные.
+    # «Я на мероприятии!» (client_at_event) исторически прятали — теперь
+    # снова показываем, deeplink /start=event и кнопка ведут в один и тот
+    # же event-v2 flow.
+    skip_actions = []
     if not show_ai:
         skip_actions.append('client_ask_ai')
     if not is_admin:
@@ -106,6 +109,7 @@ def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
         ['Чат с менеджером', 'url', 'https://t.me/winline_affiliate'],
         ['Наши соц. сети', 'call', 'client_socials'],
         ['📅 Календарь мероприятий', 'call', 'client_calendar'],
+        ['🎉 Я на мероприятии!', 'call', 'client_at_event'],
         ['🚪 Выйти из аккаунта', 'call', 'client_logout'],
     ])
     if is_admin:
