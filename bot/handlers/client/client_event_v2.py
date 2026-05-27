@@ -82,25 +82,14 @@ async def _has_active_site(email: str) -> bool:
     """Есть ли у юзера площадка, которая засчитывается для event-флоу.
     Засчитываются status=1 (активна) и status=2 (на модерации) — иначе
     свежезарегистрированный партнёр зависает на «нет площадки», пока
-    модераторы не одобрят, и весь сценарий ломается.
-
-    ВАЖНО: ходим напрямую в живой GraphQL Винлайна (`_get_user_websites_api`),
-    а не через S3-дамп. S3 обновляется раз в сутки в 04:00 МСК, поэтому
-    свежесозданная партнёром площадка может не попасть в дамп ещё ~24 часа.
-    На ивенте партнёры создают площадку прямо сейчас и тут же возвращаются
-    в бот за билетом — им нужен **актуальный** ответ, а не вчерашний снимок."""
+    модераторы не одобрят, и весь сценарий ломается."""
     try:
-        # get_user_by_email тоже идёт через api в обход кэша, чтобы свежий
-        # юзер (зарегался минуту назад) точно нашёлся.
-        from bot.integrations.winline.api import _get_user_by_email_api, _get_user_websites_api  # type: ignore
-        info = await _get_user_by_email_api(email)
+        info = await get_user_by_email(email)
         uid = info.get('id') if info else None
         if not uid:
             return False
-        sites = await _get_user_websites_api(int(uid), email) or []
-        has = any(s.get('status') in (1, 2) for s in sites)
-        logger.info(f'[event_v2] site_check email={email} uid={uid} sites={len(sites)} has={has}')
-        return has
+        sites = await get_user_websites(int(uid), email) or []
+        return any(s.get('status') in (1, 2) for s in sites)
     except Exception as e:
         logger.warning(f'[event_v2] site check failed for {email}: {e}')
         return False
