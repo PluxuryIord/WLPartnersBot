@@ -1756,6 +1756,46 @@ async def reg_help(call: CallbackQuery):
 _QR_CAPTION_CACHE: dict = {'value': None, 'expires_at': 0.0}
 _QR_CAPTION_TTL_SEC = 60
 
+# Флаг «розыгрыш скрыт» из event_settings — управляется тогглом в админке.
+# 30 сек кэша: меняется редко, но когда меняется — хотим быстро реагировать
+# (kill-switch на ивенте). API-уровень kill-switch'а в panel уже мгновенный
+# — здесь только про скрытие UI-баннера в боте.
+_RAFFLE_HIDDEN_CACHE: dict = {'value': False, 'expires_at': 0.0}
+_RAFFLE_HIDDEN_TTL_SEC = 30
+
+
+def _is_raffle_hidden() -> bool:
+    """True если в event_settings.raffle_hidden стоит true.
+    При ошибке БД возвращаем False (fail-open: лучше показать баннер,
+    чем спрятать его навсегда из-за случайного network glitch'а)."""
+    import time as _t
+    now = _t.monotonic()
+    if now < _RAFFLE_HIDDEN_CACHE['expires_at']:
+        return _RAFFLE_HIDDEN_CACHE['value']
+    try:
+        _db_cfg = {
+            'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
+            'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
+            'database': os.getenv('MYSQL_DATABASE', ''),
+        }
+        conn = mysql.connector.connect(**_db_cfg)
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT data FROM texts WHERE category = 'event_settings' LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        val = False
+        if row:
+            _data = row['data']
+            _s = json_mod.loads(_data) if isinstance(_data, str) else _data
+            val = bool(_s.get('raffle_hidden'))
+        _RAFFLE_HIDDEN_CACHE['value'] = val
+        _RAFFLE_HIDDEN_CACHE['expires_at'] = now + _RAFFLE_HIDDEN_TTL_SEC
+        return val
+    except Exception as e:
+        logger.debug(f'[raffle_hidden] read failed, defaulting to False: {e}')
+        _RAFFLE_HIDDEN_CACHE['expires_at'] = now + _RAFFLE_HIDDEN_TTL_SEC
+        return False
+
 
 def _get_qr_caption() -> str:
     """Get QR caption text from event_settings in DB, with 60s in-memory cache."""
@@ -2165,6 +2205,14 @@ async def _send_event_registration_promo(user_id: int):
 
     if await has_user_tag(user_id, NO_RAFFLE_TAG):
         logger.info(f'[send_event_registration_promo] user={user_id} has NO_RAFFLE_TAG, skipping')
+        return
+
+    # Kill-switch с тоггла «Розыгрыш мячей» в админке. Когда выключен — баннер
+    # «Хочешь выиграть мяч от Роналдиньо» не показываем никому. Мерч-флоу не
+    # ломается: этот вызов — последний шаг ПОСЛЕ выдачи мерч-QR в анкете,
+    # просто молча выходим, юзер остаётся на экране с QR.
+    if _is_raffle_hidden():
+        logger.info(f'[send_event_registration_promo] user={user_id} raffle_hidden=true, skipping')
         return
 
     from bot.utils.dynamic_kb import get_screen_kb

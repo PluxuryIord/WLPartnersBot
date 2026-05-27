@@ -656,11 +656,14 @@ async def show_registration_promo(user_id: int):
     """Показать экран промо регистрации напрямую (без callback).
 
     Не вызывается из текущего кода, но оставлен на случай legacy-вызовов.
-    Уважает NO_RAFFLE_TAG.
+    Уважает NO_RAFFLE_TAG и тоггл «Розыгрыш мячей» в админке.
     """
-    from bot.handlers.client.client_main import has_user_tag, NO_RAFFLE_TAG  # type: ignore
+    from bot.handlers.client.client_main import has_user_tag, NO_RAFFLE_TAG, _is_raffle_hidden  # type: ignore
     if await has_user_tag(user_id, NO_RAFFLE_TAG):
         logger.info(f'[show_registration_promo] user={user_id} has NO_RAFFLE_TAG, skipping')
+        return
+    if _is_raffle_hidden():
+        logger.info(f'[show_registration_promo] user={user_id} raffle_hidden=true, skipping')
         return
     fallback = ('<b>Хочешь выиграть 1 из 10 мячей, подписанным легендой '
                 'футбола и амбассадором WINLINE, Роналдиньо?</b>\n\n'
@@ -676,11 +679,15 @@ async def show_registration_promo(user_id: int):
 
 async def event_v2_registration_promo(call: CallbackQuery, state: FSMContext):
     """Показать экран event_registration_promo (после анкеты + QR мерч).
-    Уважает NO_RAFFLE_TAG — если у юзера стоит, callback просто закрывается.
+    Уважает NO_RAFFLE_TAG и тоггл «Розыгрыш мячей» в админке.
     """
-    from bot.handlers.client.client_main import has_user_tag, NO_RAFFLE_TAG  # type: ignore
+    from bot.handlers.client.client_main import has_user_tag, NO_RAFFLE_TAG, _is_raffle_hidden  # type: ignore
     if await has_user_tag(call.from_user.id, NO_RAFFLE_TAG):
         logger.info(f'[event_v2_registration_promo] user={call.from_user.id} has NO_RAFFLE_TAG, skipping')
+        await call.answer()
+        return
+    if _is_raffle_hidden():
+        logger.info(f'[event_v2_registration_promo] user={call.from_user.id} raffle_hidden=true, skipping')
         await call.answer()
         return
     try:
