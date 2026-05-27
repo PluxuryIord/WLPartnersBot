@@ -242,28 +242,17 @@ async def event_v2_intro_next(call: CallbackQuery, state: FSMContext):
 
 
 async def event_v2_partner_yes(call: CallbackQuery, state: FSMContext):
-    """«Работаю с WINLINE PARTNERS» → промо верификации."""
-    if state and await state.get_state():
-        await state.clear()
-    # Mark the flow as "partner" so the final congrats screen knows to keep
-    # the «🎁 Хочу мерч» button (these users have NOT been through anketa yet
-    # and need a way to claim merch). For «Не работаю» the flow goes through
-    # _anketa_finish which clears state, so this flag never reaches congrats.
-    await state.update_data(event_v2_flow='partner')
-    # Снимаем тег __no_raffle__ если он застрял с прошлого «Не работаю»-теста.
-    # У партнёра анкеты не было — он гарантированно идёт в раффл.
-    from bot.handlers.client.client_main import remove_user_tag, NO_RAFFLE_TAG  # type: ignore
-    asyncio.create_task(remove_user_tag(call.from_user.id, NO_RAFFLE_TAG))
-    try:
-        await call.message.delete()
-    except TelegramAPIError:
-        pass
-    await _show_screen(
-        call.from_user.id, 'event_verify_promo',
-        fallback='<b>Верифицируй свой партнёрский аккаунт</b>',
-        message_key='promo',
-    )
-    await call.answer()
+    """«Работаю с WINLINE PARTNERS» → анкета (тот же флоу что у «Не работаю»).
+
+    Раньше партнёр шёл по отдельной ветке: event_verify_promo → email → OTP →
+    проверка площадки → раффл-билет. С отключённым раффлом эта ветка теряла
+    смысл (билет не выдаётся), а сам promo-экран содержит раффл-баннер. По
+    решению — оба ответа на «работаете ли с WL» теперь ведут в одну анкету
+    с выдачей мерч-QR в финале. Партнёры по-прежнему могут поставить «Продаю
+    трафик» в анкете — раффл-баннер после анкеты гасится отдельным тогглом
+    в админке (_is_raffle_hidden), если активен.
+    """
+    await event_v2_partner_no(call, state)
 
 
 async def event_v2_want_merch(call: CallbackQuery, state: FSMContext):
