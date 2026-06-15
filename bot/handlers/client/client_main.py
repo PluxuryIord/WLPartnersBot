@@ -736,35 +736,12 @@ async def process_auth_otp(message: Message, state: FSMContext):
 
 # ── PM: Моя статистика ─────────────────────────────────────────────────────
 
-_WEBSITE_STATUS_LABELS = {
-    1: '✅ активна',
-    2: '⏳ на модерации',
-    3: '❌ отклонена',
-}
-
 _ROLE_LABELS = {
     'partner': 'Партнёр',
     'admin': 'Администратор',
     'manager': 'Менеджер',
     'owner': 'Владелец',
 }
-
-
-def _fmt_ts_ms(ts) -> str:
-    """Format a millisecond timestamp (string or int) as 'YYYY-MM-DD HH:MM'."""
-    if ts is None or ts == '':
-        return '—'
-    try:
-        ts_int = int(ts)
-    except (TypeError, ValueError):
-        return '—'
-    # API timestamps appear to be in milliseconds
-    if ts_int > 10**12:
-        ts_int //= 1000
-    try:
-        return datetime.fromtimestamp(ts_int).strftime('%Y-%m-%d %H:%M')
-    except (OSError, ValueError):
-        return '—'
 
 
 def _fmt_money(v) -> str:
@@ -819,8 +796,6 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
         f'<b>Telegram:</b> {tg}',
         f'<b>Роль:</b> {role_label}',
         f'<b>Статус:</b> {status_label}',
-        f'<b>Регистрация:</b> {_fmt_ts_ms(user.get("created"))}',
-        f'<b>Последний вход:</b> {_fmt_ts_ms(user.get("lastLogin"))}',
         '',
         f'💰 <b>Заработано:</b> {earned} ₽',
         f'💸 <b>Выведено:</b> {withdrawn} ₽',
@@ -843,14 +818,6 @@ def _build_stats_text(user: dict, sites: list[dict]) -> str:
             f'<b>🌐 Площадки:</b> {len(sites)} '
             f'(активных: {len(active)}, на модерации: {len(moderating)}, отклонённых: {len(rejected)})'
         )
-        # Show first 10 sites to keep caption under Telegram limits
-        for s in sites[:10]:
-            status = _WEBSITE_STATUS_LABELS.get(s.get('status'), '—')
-            nm = s.get('name') or '—'
-            alias = s.get('alias') or '—'
-            parts.append(f'• <code>{alias}</code> · {nm} · {status}')
-        if len(sites) > 10:
-            parts.append(f'<i>…и ещё {len(sites) - 10} площадок</i>')
         if not active:
             parts.append(
                 '\n⚠️ Ни одной активной площадки. '
