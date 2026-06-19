@@ -31,14 +31,36 @@ import time
 from collections import defaultdict
 from datetime import date as _date
 from typing import Iterable, Optional
+from urllib.parse import quote_plus
 
 import boto3
 import pyarrow.parquet as pq
 from botocore.config import Config as BotoConfig
 
-# Reuse the bot's SQLAlchemy engine — pool_pre_ping + pool_recycle already
-# configured there. Loader gets the same robust connection management.
-from bot.integrations.database.connection.engine import mysql_engine
+# Load a .env sitting next to the script (no-op if python-dotenv isn't installed
+# or there's no .env — systemd EnvironmentFile still works in that case).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass
+
+# Standalone DB engine — no dependency on the bot package, so the loader can run
+# on an isolated host. Configured via its own WL_ADMON_DB_* env vars, kept
+# separate from the bot's MYSQL_* so the two targets can never be confused.
+from sqlalchemy import create_engine as _create_engine
+
+_DB_HOST = os.getenv('WL_ADMON_DB_HOST', '127.0.0.1')
+_DB_PORT = int(os.getenv('WL_ADMON_DB_PORT', '3306') or 3306)
+_DB_USER = os.getenv('WL_ADMON_DB_USER', '')
+_DB_PASS = os.getenv('WL_ADMON_DB_PASSWORD', '')
+_DB_NAME = os.getenv('WL_ADMON_DB_NAME', 'wl_admon')
+
+mysql_engine = _create_engine(
+    f'mysql+pymysql://{_DB_USER}:{quote_plus(_DB_PASS)}@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}?charset=utf8mb4',
+    pool_pre_ping=True,
+    pool_recycle=3600,
+)
 
 logger = logging.getLogger('wl_admon_loader')
 
