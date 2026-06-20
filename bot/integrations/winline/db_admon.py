@@ -13,10 +13,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import date as _date, datetime
 from typing import Optional
+from urllib.parse import quote_plus
 
-from bot.integrations.database.connection.engine import mysql_engine
+# The wl_admon_* mirror lives on its own DB host (separate box). Use a dedicated
+# engine from WL_ADMON_DB_* env vars when configured; otherwise fall back to the
+# bot's main engine so nothing breaks before the mirror is wired up.
+_ADMON_HOST = os.getenv('WL_ADMON_DB_HOST', '')
+if _ADMON_HOST:
+    from sqlalchemy import create_engine as _create_engine
+    mysql_engine = _create_engine(
+        'mysql+pymysql://{u}:{p}@{h}:{port}/{db}?charset=utf8mb4'.format(
+            u=os.getenv('WL_ADMON_DB_USER', ''),
+            p=quote_plus(os.getenv('WL_ADMON_DB_PASSWORD', '')),
+            h=_ADMON_HOST,
+            port=int(os.getenv('WL_ADMON_DB_PORT', '3306') or 3306),
+            db=os.getenv('WL_ADMON_DB_NAME', 'wl_admon'),
+        ),
+        pool_pre_ping=True,
+        pool_recycle=3600,
+    )
+else:
+    from bot.integrations.database.connection.engine import mysql_engine
 
 logger = logging.getLogger('wl_bot')
 
