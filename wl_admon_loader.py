@@ -132,6 +132,16 @@ def _read_parquet(s3, key: str):
     return pq.read_table(io.BytesIO(body))
 
 
+def _iter_parquet_batches(s3, key: str, batch_size: int = 5000):
+    """Stream a parquet file in record batches instead of materialising the
+    whole table as Python objects. Bounds memory to ~batch_size rows regardless
+    of file size — a single multi-million-row history dump no longer OOMs."""
+    body = s3.get_object(Bucket=S3_BUCKET, Key=key)['Body'].read()
+    pf = pq.ParquetFile(io.BytesIO(body))
+    for batch in pf.iter_batches(batch_size=batch_size):
+        yield batch
+
+
 # ─── MySQL helpers ─────────────────────────────────────────────────────────
 
 from contextlib import contextmanager
@@ -438,11 +448,14 @@ def _process_incremental_table(s3, table: str) -> None:
 
     for key in new_keys:
         try:
-            tbl = _read_parquet(s3, key)
-            rows = [builder(d) for d in tbl.to_pylist()]
-            inserted = _executemany_batched(sql, rows)
-            _mark_ingested(table, key, len(rows))
-            logger.info(f'[{table}] {key}: {len(rows)} rows ({inserted} affected)')
+            total = 0
+            for batch in _iter_parquet_batches(s3, key):
+                rows = [builder(d) for d in batch.to_pylist()]
+                _executemany_batched(sql, rows)
+                total += len(rows)
+                del rows
+            _mark_ingested(table, key, total)
+            logger.info(f'[{table}] {key}: {total} rows')
         except Exception:
             logger.exception(f'[{table}] failed on {key}, skipping (will retry next tick)')
 
