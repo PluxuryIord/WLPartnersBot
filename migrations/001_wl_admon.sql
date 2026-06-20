@@ -76,9 +76,9 @@ CREATE TABLE IF NOT EXISTS wl_admon_stats_group_by (
   datetz            DATE,
   user_id           BIGINT,
   website_id        BIGINT,
-  offer_id          VARCHAR(64),
-  offer_tag         VARCHAR(255),
-  link              VARCHAR(512),
+  offer_id          VARCHAR(128),
+  offer_tag         VARCHAR(512),
+  link              TEXT,
   -- metrics
   clicks            INT,
   goal11_quantity   INT,
