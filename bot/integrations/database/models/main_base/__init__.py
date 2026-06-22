@@ -16,6 +16,8 @@ from .user_auth import UserAuth
 from .group_chat import GroupChat
 from .event_question import EventQuestion
 from .event_answer import EventAnswer
+from .alarm_site_state import AlarmSiteState
+from .alarm_log import AlarmLog
 
 Base.create_tables()
 Settings.startup()

@@ -11,6 +11,7 @@ def initialization_handlers(dp):
     from .admin.admin_topics import register_handlers_admin_topics
     from .admin.admin_support import register_admin_handlers_support
     from .admin.admin_event import register_handlers_admin_event
+    from .admin.admin_alarms import register_handlers_admin_alarms
 
     from .other.error_handler import register_error_handlers
     from .other.not_handled import register_not_handled
@@ -32,6 +33,7 @@ def initialization_handlers(dp):
     register_handlers_admin_topics(dp)
     register_admin_handlers_support(dp)
     register_handlers_admin_event(dp)
+    register_handlers_admin_alarms(dp)
 
     register_handlers_files_fsm(dp)
     register_not_handled(dp)
