@@ -2,7 +2,7 @@
 
 Periodically walks the bot's logged-in audience (rows in `user_auth`), pulls
 each partner's Winline profile + websites, and fires the no-code rules authored
-in the admin panel (`wl_alarm_rules`). Six trigger types are supported — see
+in the admin panel (`wl_alarm_rules_v2`). Six trigger types are supported — see
 TRIGGER_TYPES below.
 
 Data has no status-change timestamps, so website transitions (approved /
@@ -87,16 +87,19 @@ _UNIT_SECONDS = {'days': 86400, 'hours': 3600, 'minutes': 60}
 
 # ─── blocking SQL (own short-lived connection, run via asyncio.to_thread) ─────
 
-def _q_load_rules() -> dict:
-    """Read enabled rules from wl_alarm_rules (owned by the panel). Tolerates a
-    missing table → {}. Returns {trigger_type: {threshold_seconds, message, buttons}}."""
-    out: dict = {}
+def _q_load_rules() -> list[dict]:
+    """Read enabled rules from wl_alarm_rules_v2 (owned by the panel). Many rules
+    per trigger_type are allowed — a drip, e.g. email-unconfirmed at 3 days AND
+    at 7 days. Tolerates a missing table → []. Each item:
+      {id, trigger_type, threshold_seconds, message, buttons}."""
+    out: list[dict] = []
     conn = mysql_engine.raw_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT trigger_type, enabled, threshold_value, threshold_unit, "
-            "message_text, buttons_json FROM wl_alarm_rules"
+            "SELECT id, trigger_type, enabled, threshold_value, threshold_unit, "
+            "message_text, buttons_json FROM wl_alarm_rules_v2 "
+            "ORDER BY sort_order ASC, id ASC"
         )
         rows = cur.fetchall()
         cols = [c[0] for c in cur.description]
@@ -124,11 +127,13 @@ def _q_load_rules() -> dict:
                 buttons = json.loads(r['buttons_json']) or []
             except Exception:
                 buttons = []
-        out[tt] = {
+        out.append({
+            'id': r.get('id'),
+            'trigger_type': tt,
             'threshold_seconds': thr_seconds,
             'message': (r.get('message_text') or DEFAULT_TEXTS.get(tt, '')).strip(),
             'buttons': buttons,
-        }
+        })
     return out
 
 
@@ -381,7 +386,7 @@ async def _clicks_since(uid, created) -> int:
 
 # ─── per-user evaluation ───────────────────────────────────────────────────────
 
-async def _evaluate_user(bot, telegram_id: int, email: str, rules: dict,
+async def _evaluate_user(bot, telegram_id: int, email: str, rules_by_type: dict,
                          dry_run: bool, counters: dict) -> None:
     profile = await get_user_by_email(email)
     if not profile:
@@ -394,78 +399,99 @@ async def _evaluate_user(bot, telegram_id: int, email: str, rules: dict,
 
     snaps = await _process_site_snapshots(uid, sites)
 
-    async def fire(tt, entity_key, ctx):
-        rule = rules[tt]
+    async def fire(rule, entity_suffix, ctx):
+        # entity_key embeds the rule id so dedup is PER-RULE: the 3-day and the
+        # 7-day email rule each reach the user once, independently.
         msg = _render(rule['message'], ctx)
-        await _maybe_send(bot, trigger_type=tt, telegram_id=telegram_id,
-                          entity_key=entity_key, message=msg, buttons=rule['buttons'],
+        ek = str(rule['id']) if not entity_suffix else f"{rule['id']}:{entity_suffix}"
+        await _maybe_send(bot, trigger_type=rule['trigger_type'], telegram_id=telegram_id,
+                          entity_key=ek, message=msg, buttons=rule['buttons'],
                           dry_run=dry_run, counters=counters)
-        counters['fired'][tt] += 1
+        counters['fired'][rule['trigger_type']] += 1
 
     # 1) email not confirmed (≥ threshold since registration)
-    if 'email_unconfirmed' in rules:
-        thr = rules['email_unconfirmed']['threshold_seconds']
+    email_rules = rules_by_type.get('email_unconfirmed', [])
+    if email_rules:
         age = _age_seconds(created)
-        if thr is not None and age is not None and age >= thr:
-            # db mirror may store a null/0 confirmation flag → verify live before firing.
+        if age is not None:
+            # db mirror may store a null/0 confirmation flag → verify live once.
             confirmed = profile.get('emailConfirmed')
             if confirmed is not True:
                 live = await _wl_api._get_user_by_email_api(email)
                 confirmed = live.get('emailConfirmed') if live else None
             if confirmed is False:
-                await fire('email_unconfirmed', '', {'first_name': first_name})
+                for rule in email_rules:
+                    thr = rule['threshold_seconds']
+                    if thr is not None and age >= thr:
+                        await fire(rule, '', {'first_name': first_name})
 
     # 2) no website at all (≥ threshold since registration)
-    if 'no_site' in rules and not sites:
-        thr = rules['no_site']['threshold_seconds']
+    no_site_rules = rules_by_type.get('no_site', [])
+    if no_site_rules and not sites:
         age = _age_seconds(created)
-        if thr is not None and age is not None and age >= thr:
-            await fire('no_site', '', {'first_name': first_name})
+        if age is not None:
+            for rule in no_site_rules:
+                thr = rule['threshold_seconds']
+                if thr is not None and age >= thr:
+                    await fire(rule, '', {'first_name': first_name})
 
     # 3) website stuck in moderation (status=2) longer than threshold
-    if 'site_moderation' in rules:
-        thr = rules['site_moderation']['threshold_seconds']
+    mod_rules = rules_by_type.get('site_moderation', [])
+    if mod_rules:
         now = datetime.now()
         for wid, mod_since in snaps['moderation_clock'].items():
-            if thr is not None and mod_since is not None and (now - mod_since).total_seconds() >= thr:
-                site = next((s for s in sites if str(s.get('id')) == str(wid)), {})
-                await fire('site_moderation', str(wid),
-                           {'first_name': first_name, 'site_name': site.get('name'),
-                            'site_url': site.get('url')})
+            if mod_since is None:
+                continue
+            elapsed = (now - mod_since).total_seconds()
+            site = next((s for s in sites if str(s.get('id')) == str(wid)), {})
+            ctx = {'first_name': first_name, 'site_name': site.get('name'),
+                   'site_url': site.get('url')}
+            for rule in mod_rules:
+                thr = rule['threshold_seconds']
+                if thr is not None and elapsed >= thr:
+                    await fire(rule, str(wid), ctx)
 
     # 4) website just rejected (→ status=3)
-    if 'site_rejected' in rules:
+    rej_rules = rules_by_type.get('site_rejected', [])
+    if rej_rules:
         for site in snaps['rejected']:
             wid = site.get('id')
             reason = (site.get('rejectionReasonComment') or '').strip()
-            if not reason and '{reason}' in rules['site_rejected']['message']:
+            if not reason and any('{reason}' in r['message'] for r in rej_rules):
                 reason = await _fetch_reject_reason(uid, email, wid)
-            await fire('site_rejected', str(wid),
-                       {'first_name': first_name, 'reason': reason or '—',
-                        'site_name': site.get('name'), 'site_url': site.get('url')})
+            ctx = {'first_name': first_name, 'reason': reason or '—',
+                   'site_name': site.get('name'), 'site_url': site.get('url')}
+            for rule in rej_rules:
+                await fire(rule, str(wid), ctx)
 
     # 5) website just approved (2 → 1)
-    if 'site_approved' in rules:
+    appr_rules = rules_by_type.get('site_approved', [])
+    if appr_rules:
         for site in snaps['approved']:
-            await fire('site_approved', str(site.get('id')),
-                       {'first_name': first_name, 'site_name': site.get('name'),
-                        'site_url': site.get('url')})
+            ctx = {'first_name': first_name, 'site_name': site.get('name'),
+                   'site_url': site.get('url')}
+            for rule in appr_rules:
+                await fire(rule, str(site.get('id')), ctx)
 
     # 6) active website but no clicks (≥ threshold since the site went active)
-    if 'no_clicks' in rules:
-        thr = rules['no_clicks']['threshold_seconds']
+    clk_rules = rules_by_type.get('no_clicks', [])
+    if clk_rules:
         active = [s for s in sites if s.get('status') == 1]
-        if thr is not None and active:
+        if active:
             ages = [(_age_seconds(s.get('created')), s) for s in active]
             ages = [(a, s) for a, s in ages if a is not None]
             if ages:
                 oldest_age, oldest = max(ages, key=lambda t: t[0])
-                if oldest_age >= thr:
-                    clicks = await _clicks_since(uid, oldest.get('created'))
-                    if clicks == 0:
-                        await fire('no_clicks', '',
-                                   {'first_name': first_name, 'site_name': oldest.get('name'),
-                                    'site_url': oldest.get('url')})
+                clicks = None  # fetched lazily, at most once per user
+                ctx = {'first_name': first_name, 'site_name': oldest.get('name'),
+                       'site_url': oldest.get('url')}
+                for rule in clk_rules:
+                    thr = rule['threshold_seconds']
+                    if thr is not None and oldest_age >= thr:
+                        if clicks is None:
+                            clicks = await _clicks_since(uid, oldest.get('created'))
+                        if clicks == 0:
+                            await fire(rule, '', ctx)
 
 
 # ─── one full pass ─────────────────────────────────────────────────────────────
@@ -481,16 +507,21 @@ async def run_pass(bot, *, dry_run: Optional[bool] = None, limit: int = 0) -> di
 
     rules = await asyncio.to_thread(_q_load_rules)
     if not rules:
-        return {'enabled': True, 'note': 'нет активных правил (или таблица wl_alarm_rules не создана)'}
+        return {'enabled': True, 'note': 'нет активных правил (или таблица wl_alarm_rules_v2 не создана)'}
+
+    # Group the flat rule list by trigger_type — many rules per type are allowed.
+    rules_by_type: dict = {}
+    for r in rules:
+        rules_by_type.setdefault(r['trigger_type'], []).append(r)
 
     audience = await asyncio.to_thread(_q_audience, limit or ALARM_MAX_USERS)
     counters = {'users': 0, 'sent': 0, 'dryrun': 0, 'skipped_dedup': 0, 'failed': 0,
-                'fired': {tt: 0 for tt in rules}}
+                'fired': {tt: 0 for tt in rules_by_type}}
 
     for telegram_id, email in audience:
         counters['users'] += 1
         try:
-            await _evaluate_user(bot, telegram_id, email, rules, dry_run, counters)
+            await _evaluate_user(bot, telegram_id, email, rules_by_type, dry_run, counters)
         except Exception as e:
             logger.warning(f'[alarms] user eval failed tg={telegram_id} email={email}: {e}')
         if ALARM_SEND_DELAY:
@@ -498,7 +529,8 @@ async def run_pass(bot, *, dry_run: Optional[bool] = None, limit: int = 0) -> di
 
     counters['dry_run'] = dry_run
     counters['test_chat'] = ALARM_TEST_CHAT_ID or None
-    counters['rules'] = list(rules.keys())
+    counters['rules_total'] = len(rules)
+    counters['rules_by_type'] = {tt: len(rs) for tt, rs in rules_by_type.items()}
     logger.warning(f'[alarms] pass done: {counters}')
     return counters
 
