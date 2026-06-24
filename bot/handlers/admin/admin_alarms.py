@@ -45,6 +45,11 @@ async def run_alarms_cmd(message: Message):
     fired_lines = '\n'.join(f'  • {k}: {v}' for k, v in fired.items() if v) or '  —'
     mode = 'DRY-RUN (ничего не отправлено)' if summary.get('dry_run') else 'БОЕВОЙ'
     test_chat = summary.get('test_chat')
+    cap_line = ''
+    if summary.get('capped'):
+        cap_line = (f'\n⚠️ Достигнут лимит отправок за проход '
+                    f'(ALARM_MAX_SENDS_PER_PASS={alarms.ALARM_MAX_SENDS_PER_PASS}) — '
+                    f'проход остановлен. Для боевого залпа подними лимит или 0.')
     text = (
         f'✅ Прогон завершён\n'
         f'Режим: <b>{mode}</b>\n'
@@ -53,6 +58,7 @@ async def run_alarms_cmd(message: Message):
         f'Отправлено: {summary.get("sent", 0)} | dry: {summary.get("dryrun", 0)} | '
         f'пропущено (дедуп): {summary.get("skipped_dedup", 0)} | ошибок: {summary.get("failed", 0)}\n'
         f'Сработало по триггерам:\n{fired_lines}'
+        + cap_line
     )
     await message.answer(text)
 

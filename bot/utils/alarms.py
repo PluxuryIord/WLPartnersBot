@@ -24,6 +24,8 @@ Safety (env, all read at import):
   ALARM_SEND_DELAY      seconds slept between users (default 0.05).
   ALARM_RESEND_DAYS     re-send cooldown — 0 = once ever (default), N = re-nudge
                         after N days.
+  ALARM_MAX_SENDS_PER_PASS  circuit-breaker — stop a pass after this many real
+                        sends (default 50). 0 = unlimited (real blast).
 
 Dedup vs test: any test activity (dry-run OR a test-chat override) is logged
 with dry_run=1, so it dedups against the test space only and never suppresses
@@ -69,6 +71,11 @@ ALARM_SEND_DELAY = float(os.getenv('ALARM_SEND_DELAY', '0.05') or 0.05)
 # safe default — the hourly runner never re-spams). N>0 = the same alarm may be
 # re-sent to that user only after N days (a periodic re-nudge).
 ALARM_RESEND_DAYS = int(os.getenv('ALARM_RESEND_DAYS', '0') or 0)
+# Hard circuit-breaker: max REAL sends in a single pass. Once hit, the pass
+# stops early. Prevents an accidental flood (wrong trigger enabled at
+# MAX_USERS=0) from blasting hundreds. 0 = unlimited (set deliberately for a
+# real production blast). Default 50 = safe for testing.
+ALARM_MAX_SENDS_PER_PASS = int(os.getenv('ALARM_MAX_SENDS_PER_PASS', '50') or 0)
 
 
 # ─── trigger catalog ──────────────────────────────────────────────────────────
@@ -534,7 +541,7 @@ async def run_pass(bot, *, dry_run: Optional[bool] = None, limit: int = 0) -> di
 
     audience = await asyncio.to_thread(_q_audience, limit or ALARM_MAX_USERS)
     counters = {'users': 0, 'sent': 0, 'dryrun': 0, 'skipped_dedup': 0, 'failed': 0,
-                'fired': {tt: 0 for tt in rules_by_type}}
+                'capped': 0, 'fired': {tt: 0 for tt in rules_by_type}}
 
     for telegram_id, email in audience:
         counters['users'] += 1
@@ -542,6 +549,12 @@ async def run_pass(bot, *, dry_run: Optional[bool] = None, limit: int = 0) -> di
             await _evaluate_user(bot, telegram_id, email, rules_by_type, dry_run, counters)
         except Exception as e:
             logger.warning(f'[alarms] user eval failed tg={telegram_id} email={email}: {e}')
+        # Circuit-breaker: stop the whole pass once the real-send cap is hit.
+        if ALARM_MAX_SENDS_PER_PASS and counters['sent'] >= ALARM_MAX_SENDS_PER_PASS:
+            counters['capped'] = 1
+            logger.warning(f'[alarms] send cap {ALARM_MAX_SENDS_PER_PASS} reached '
+                           f'after {counters["users"]} users — stopping pass early')
+            break
         if ALARM_SEND_DELAY:
             await asyncio.sleep(ALARM_SEND_DELAY)
 
