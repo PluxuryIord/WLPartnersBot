@@ -37,8 +37,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from bot.integrations.database.connection import mysql_engine
-from bot.integrations.winline.api import get_user_by_email, get_user_websites, get_user_stats
 from bot.integrations.winline import api as _wl_api
+# Bulk pass reads ONLY from the wl_admon mirror (fast SQL). We deliberately do
+# NOT use api.get_* here: those fall back to the live Winline API on a mirror
+# miss, and a site-less user (the whole point of the no_site trigger) is a
+# "miss" → hundreds of sequential ~1s live calls would stall the bot.
+from bot.integrations.winline import db_admon
 
 logger = logging.getLogger('wl_bot')
 
@@ -377,7 +381,7 @@ async def _clicks_since(uid, created) -> int:
     start_iso = start.date().isoformat()
     end_iso = datetime.now(timezone.utc).date().isoformat()
     try:
-        stats = await get_user_stats(int(uid), start_iso, end_iso)
+        stats = await db_admon.get_user_stats(int(uid), start_iso, end_iso)
         return int((stats or {}).get('clicks') or 0)
     except Exception as e:
         logger.warning(f'[alarms] clicks fetch failed uid={uid}: {e}')
@@ -388,13 +392,14 @@ async def _clicks_since(uid, created) -> int:
 
 async def _evaluate_user(bot, telegram_id: int, email: str, rules_by_type: dict,
                          dry_run: bool, counters: dict) -> None:
-    profile = await get_user_by_email(email)
+    # Mirror-only (db_admon), never the live-API-fallback wrapper — see import note.
+    profile = await db_admon.get_user_by_email(email)
     if not profile:
         return
     uid = profile.get('id')
     first_name = profile.get('firstName') or ''
     created = profile.get('created')
-    sites = (await get_user_websites(int(uid), email)) if uid else []
+    sites = (await db_admon.get_user_websites(int(uid))) if uid else []
     sites = sites or []
 
     snaps = await _process_site_snapshots(uid, sites)
@@ -410,20 +415,16 @@ async def _evaluate_user(bot, telegram_id: int, email: str, rules_by_type: dict,
         counters['fired'][rule['trigger_type']] += 1
 
     # 1) email not confirmed (≥ threshold since registration)
+    # Mirror-only: emailConfirmed is reliably populated (verified). Fire only on
+    # an explicit False; None/unknown → don't fire (no per-user live API call).
     email_rules = rules_by_type.get('email_unconfirmed', [])
-    if email_rules:
+    if email_rules and profile.get('emailConfirmed') is False:
         age = _age_seconds(created)
         if age is not None:
-            # db mirror may store a null/0 confirmation flag → verify live once.
-            confirmed = profile.get('emailConfirmed')
-            if confirmed is not True:
-                live = await _wl_api._get_user_by_email_api(email)
-                confirmed = live.get('emailConfirmed') if live else None
-            if confirmed is False:
-                for rule in email_rules:
-                    thr = rule['threshold_seconds']
-                    if thr is not None and age >= thr:
-                        await fire(rule, '', {'first_name': first_name})
+            for rule in email_rules:
+                thr = rule['threshold_seconds']
+                if thr is not None and age >= thr:
+                    await fire(rule, '', {'first_name': first_name})
 
     # 2) no website at all (≥ threshold since registration)
     no_site_rules = rules_by_type.get('no_site', [])
