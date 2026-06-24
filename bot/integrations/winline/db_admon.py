@@ -159,6 +159,28 @@ async def get_user_websites(user_id: int) -> list[dict]:
     return [_adapt_website(r) for r in rows]
 
 
+async def get_clicks(user_id: int, start_iso: str, end_iso: str) -> int:
+    """Lightweight clicks-only lookup from stats_group_by (~126k rows, indexed).
+    Avoids the full get_user_stats path (which also scans the 6M-row conversions
+    table) — used by the bulk alarm pass so it stays fast. Returns -1 if unknown."""
+    try:
+        start_d = datetime.fromisoformat(start_iso.replace('Z', '+00:00')[:10]).date()
+        end_d = datetime.fromisoformat(end_iso.replace('Z', '+00:00')[:10]).date()
+    except Exception:
+        return -1
+    try:
+        v = await asyncio.to_thread(
+            _scalar,
+            "SELECT COALESCE(SUM(clicks), 0) FROM wl_admon_stats_group_by "
+            "WHERE user_id=%s AND datetz BETWEEN %s AND %s",
+            (int(user_id), start_d, end_d),
+        )
+        return int(v or 0)
+    except Exception as e:
+        logger.warning(f'[db_admon] get_clicks failed: {e}')
+        return -1
+
+
 async def _user_id_to_email(user_id: int) -> Optional[str]:
     em = await asyncio.to_thread(
         _scalar,

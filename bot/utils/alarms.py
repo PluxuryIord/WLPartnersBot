@@ -22,6 +22,8 @@ Safety (env, all read at import):
   ALARM_INTERVAL_SEC    scheduler period (default 3600).
   ALARM_MAX_USERS       cap audience per pass (0 = no cap).
   ALARM_SEND_DELAY      seconds slept between users (default 0.05).
+  ALARM_RESEND_DAYS     re-send cooldown — 0 = once ever (default), N = re-nudge
+                        after N days.
 
 Dedup vs test: any test activity (dry-run OR a test-chat override) is logged
 with dry_run=1, so it dedups against the test space only and never suppresses
@@ -63,6 +65,10 @@ ALARM_THRESHOLD_SCALE = float(os.getenv('ALARM_THRESHOLD_SCALE', '1') or 1)
 ALARM_INTERVAL_SEC = int(os.getenv('ALARM_INTERVAL_SEC', '3600') or 3600)
 ALARM_MAX_USERS = int(os.getenv('ALARM_MAX_USERS', '0') or 0)
 ALARM_SEND_DELAY = float(os.getenv('ALARM_SEND_DELAY', '0.05') or 0.05)
+# Re-send cooldown. 0 = a given alarm reaches a user at most ONCE, ever (the
+# safe default — the hourly runner never re-spams). N>0 = the same alarm may be
+# re-sent to that user only after N days (a periodic re-nudge).
+ALARM_RESEND_DAYS = int(os.getenv('ALARM_RESEND_DAYS', '0') or 0)
 
 
 # ─── trigger catalog ──────────────────────────────────────────────────────────
@@ -161,14 +167,25 @@ def _q_audience(limit: int = 0) -> list[tuple[int, str]]:
 
 
 def _q_already_sent(trigger_type: str, telegram_id: int, entity_key: str, log_flag: int) -> bool:
+    """Dedup. With ALARM_RESEND_DAYS=0 a prior log row blocks forever (once-ever).
+    With N>0 only a row sent within the last N days blocks — older ones let the
+    alarm re-fire (re-nudge). _q_record upserts sent_at, so the window slides."""
     conn = mysql_engine.raw_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "SELECT 1 FROM wl_alarm_log WHERE trigger_type=%s AND telegram_id=%s "
-            "AND entity_key<=>%s AND dry_run=%s LIMIT 1",
-            (trigger_type, telegram_id, entity_key, log_flag),
-        )
+        if ALARM_RESEND_DAYS > 0:
+            cur.execute(
+                "SELECT 1 FROM wl_alarm_log WHERE trigger_type=%s AND telegram_id=%s "
+                "AND entity_key<=>%s AND dry_run=%s "
+                "AND sent_at > (NOW() - INTERVAL %s DAY) LIMIT 1",
+                (trigger_type, telegram_id, entity_key, log_flag, ALARM_RESEND_DAYS),
+            )
+        else:
+            cur.execute(
+                "SELECT 1 FROM wl_alarm_log WHERE trigger_type=%s AND telegram_id=%s "
+                "AND entity_key<=>%s AND dry_run=%s LIMIT 1",
+                (trigger_type, telegram_id, entity_key, log_flag),
+            )
         return cur.fetchone() is not None
     finally:
         conn.close()
@@ -381,8 +398,8 @@ async def _clicks_since(uid, created) -> int:
     start_iso = start.date().isoformat()
     end_iso = datetime.now(timezone.utc).date().isoformat()
     try:
-        stats = await db_admon.get_user_stats(int(uid), start_iso, end_iso)
-        return int((stats or {}).get('clicks') or 0)
+        # Light clicks-only query (no 6M-row conversions scan) — keeps the pass fast.
+        return await db_admon.get_clicks(int(uid), start_iso, end_iso)
     except Exception as e:
         logger.warning(f'[alarms] clicks fetch failed uid={uid}: {e}')
         return -1
