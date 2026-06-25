@@ -16,7 +16,8 @@ All DB access goes through asyncio.to_thread on short-lived raw connections
 Safety (env, all read at import):
   ALARMS_ENABLED        master kill-switch (default False — nothing runs).
   ALARMS_DRY_RUN        log who WOULD get what, send nothing (default True).
-  ALARM_TEST_CHAT_ID    route every alarm to this chat instead of the partner.
+  ALARM_TEST_CHAT_ID    route every alarm to this chat — or a comma-separated
+                        LIST of chats — instead of the real partner.
   ALARM_THRESHOLD_SCALE multiply every time threshold (e.g. 0.0007 ≈ days→minutes
                         for testing; 1.0 = real).
   ALARM_INTERVAL_SEC    scheduler period (default 3600).
@@ -60,9 +61,26 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return v.strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def _parse_ids(s: str) -> list[int]:
+    """Parse a comma/semicolon-separated list of chat ids → [int]."""
+    out = []
+    for part in (s or '').replace(';', ',').split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part))
+        except ValueError:
+            pass
+    return out
+
+
 ALARMS_ENABLED = _env_bool('ALARMS_ENABLED', False)
 ALARMS_DRY_RUN = _env_bool('ALARMS_DRY_RUN', True)
-ALARM_TEST_CHAT_ID = int(os.getenv('ALARM_TEST_CHAT_ID', '0') or 0)
+# ALARM_TEST_CHAT_ID may be a comma-separated LIST (route a test to several
+# people). While set, every alarm goes to ALL of them, never to real users.
+_TEST_CHAT_IDS = _parse_ids(os.getenv('ALARM_TEST_CHAT_ID', ''))
+ALARM_TEST_CHAT_ID = _TEST_CHAT_IDS[0] if _TEST_CHAT_IDS else 0  # legacy single-id refs
 ALARM_THRESHOLD_SCALE = float(os.getenv('ALARM_THRESHOLD_SCALE', '1') or 1)
 ALARM_INTERVAL_SEC = int(os.getenv('ALARM_INTERVAL_SEC', '3600') or 3600)
 ALARM_MAX_USERS = int(os.getenv('ALARM_MAX_USERS', '0') or 0)
@@ -100,6 +118,26 @@ DEFAULT_TEXTS = {
 }
 
 _UNIT_SECONDS = {'days': 86400, 'hours': 3600, 'minutes': 60}
+
+# RU labels + a sample context used to render examples in the report/preview.
+TRIGGER_NAMES = {
+    'email_unconfirmed': 'Email не подтверждён',
+    'no_site': 'Нет площадки',
+    'site_moderation': 'Площадка на модерации',
+    'site_rejected': 'Площадка отклонена',
+    'site_approved': 'Площадка одобрена',
+    'no_clicks': 'Нет трафика',
+}
+_UNIT_RU = {'days': 'дн.', 'hours': 'ч.', 'minutes': 'мин.'}
+_SAMPLE_CTX = {'first_name': 'Иван', 'reason': 'нет трафика на площадке',
+               'site_name': 'mysite.ru', 'site_url': 'https://mysite.ru'}
+
+
+def _thr_label(rule: dict) -> str:
+    v = rule.get('threshold_value')
+    if v is None:
+        return ''
+    return f" ({v} {_UNIT_RU.get(rule.get('threshold_unit'), rule.get('threshold_unit') or '')})"
 
 
 # ─── blocking SQL (own short-lived connection, run via asyncio.to_thread) ─────
@@ -147,6 +185,8 @@ def _q_load_rules() -> list[dict]:
         out.append({
             'id': r.get('id'),
             'trigger_type': tt,
+            'threshold_value': val,
+            'threshold_unit': unit if val is not None else None,
             'threshold_seconds': thr_seconds,
             'message': (r.get('message_text') or DEFAULT_TEXTS.get(tt, '')).strip(),
             'buttons': buttons,
@@ -291,7 +331,7 @@ def _render(template: str, ctx: dict) -> str:
 
 # ─── snapshot / transition detection ──────────────────────────────────────────
 
-async def _process_site_snapshots(user_id, sites: list[dict]) -> dict:
+async def _process_site_snapshots(user_id, sites: list[dict], write: bool = True) -> dict:
     """Diff current website statuses against the snapshot. Returns:
        {'approved': [site...], 'rejected': [site...],
         'moderation_clock': {website_id: moderation_since_datetime}}
@@ -331,7 +371,8 @@ async def _process_site_snapshots(user_id, sites: list[dict]) -> dict:
         if status == 2:
             res['moderation_clock'][wid] = mod_since
 
-    await asyncio.to_thread(_q_upsert_states, upserts)
+    if write:
+        await asyncio.to_thread(_q_upsert_states, upserts)
     return res
 
 
@@ -359,14 +400,15 @@ async def _maybe_send(bot, *, trigger_type: str, telegram_id: int, entity_key: s
     """Dedup-check, then send (unless dry-run) and log. entity_key/dedup are keyed
     on the real recipient even when routed to a test chat."""
     # Any test activity (dry-run OR test-chat routing) lives in the dry_run=1 space.
-    is_test = dry_run or bool(ALARM_TEST_CHAT_ID)
+    is_test = dry_run or bool(_TEST_CHAT_IDS)
     log_flag = 1 if is_test else 0
 
     if await asyncio.to_thread(_q_already_sent, trigger_type, telegram_id, entity_key, log_flag):
         counters['skipped_dedup'] += 1
         return
 
-    chat_id = ALARM_TEST_CHAT_ID or telegram_id
+    # Test ids set → deliver to ALL of them (never the real user). Else → real user.
+    targets = _TEST_CHAT_IDS or [telegram_id]
     preview = (message or '')[:500]
 
     if dry_run:
@@ -375,14 +417,20 @@ async def _maybe_send(bot, *, trigger_type: str, telegram_id: int, entity_key: s
         logger.info(f'[alarms] DRY {trigger_type} → tg={telegram_id} key={entity_key!r}')
         return
 
-    try:
-        await bot.send_message(chat_id, message, reply_markup=_build_markup(buttons))
+    ok_any = False
+    markup = _build_markup(buttons)
+    for chat_id in targets:
+        try:
+            await bot.send_message(chat_id, message, reply_markup=markup)
+            ok_any = True
+        except Exception as e:
+            logger.warning(f'[alarms] send failed {trigger_type} → chat={chat_id}: {e}')
+    if ok_any:
+        # one logical alarm = one log row + one "sent" tick, even if mirrored to N test chats
         await asyncio.to_thread(_q_record, trigger_type, telegram_id, entity_key, log_flag, 1, preview)
         counters['sent'] += 1
-    except Exception as e:
-        # Failed sends are NOT recorded as done, so a transient error retries next pass.
+    else:
         counters['failed'] += 1
-        logger.warning(f'[alarms] send failed {trigger_type} → tg={telegram_id} chat={chat_id}: {e}')
 
 
 async def _fetch_reject_reason(uid, email, website_id) -> str:
@@ -414,8 +462,13 @@ async def _clicks_since(uid, created) -> int:
 
 # ─── per-user evaluation ───────────────────────────────────────────────────────
 
-async def _evaluate_user(bot, telegram_id: int, email: str, rules_by_type: dict,
-                         dry_run: bool, counters: dict) -> None:
+async def _evaluate_user(telegram_id: int, email: str, rules_by_type: dict,
+                         on_fire, *, write_snapshot: bool = True) -> None:
+    """Evaluate one user against the rules. For every rule that fires, calls
+    `on_fire(rule, telegram_id, entity_suffix, rendered_message)`. The caller
+    decides what to do: actually send (run_pass) or just collect (run_preview).
+    `entity_key` (for dedup) embeds the rule id so dedup is PER-RULE — the 3-day
+    and 7-day email rule each reach the user once, independently."""
     # Mirror-only (db_admon), never the live-API-fallback wrapper — see import note.
     profile = await db_admon.get_user_by_email(email)
     if not profile:
@@ -426,17 +479,10 @@ async def _evaluate_user(bot, telegram_id: int, email: str, rules_by_type: dict,
     sites = (await db_admon.get_user_websites(int(uid))) if uid else []
     sites = sites or []
 
-    snaps = await _process_site_snapshots(uid, sites)
+    snaps = await _process_site_snapshots(uid, sites, write=write_snapshot)
 
     async def fire(rule, entity_suffix, ctx):
-        # entity_key embeds the rule id so dedup is PER-RULE: the 3-day and the
-        # 7-day email rule each reach the user once, independently.
-        msg = _render(rule['message'], ctx)
-        ek = str(rule['id']) if not entity_suffix else f"{rule['id']}:{entity_suffix}"
-        await _maybe_send(bot, trigger_type=rule['trigger_type'], telegram_id=telegram_id,
-                          entity_key=ek, message=msg, buttons=rule['buttons'],
-                          dry_run=dry_run, counters=counters)
-        counters['fired'][rule['trigger_type']] += 1
+        await on_fire(rule, telegram_id, entity_suffix, _render(rule['message'], ctx))
 
     # 1) email not confirmed (≥ threshold since registration)
     # Mirror-only: emailConfirmed is reliably populated (verified). Fire only on
@@ -543,10 +589,17 @@ async def run_pass(bot, *, dry_run: Optional[bool] = None, limit: int = 0) -> di
     counters = {'users': 0, 'sent': 0, 'dryrun': 0, 'skipped_dedup': 0, 'failed': 0,
                 'capped': 0, 'fired': {tt: 0 for tt in rules_by_type}}
 
+    async def send_sink(rule, tg_id, entity_suffix, msg):
+        ek = str(rule['id']) if not entity_suffix else f"{rule['id']}:{entity_suffix}"
+        await _maybe_send(bot, trigger_type=rule['trigger_type'], telegram_id=tg_id,
+                          entity_key=ek, message=msg, buttons=rule['buttons'],
+                          dry_run=dry_run, counters=counters)
+        counters['fired'][rule['trigger_type']] += 1
+
     for telegram_id, email in audience:
         counters['users'] += 1
         try:
-            await _evaluate_user(bot, telegram_id, email, rules_by_type, dry_run, counters)
+            await _evaluate_user(telegram_id, email, rules_by_type, send_sink, write_snapshot=True)
         except Exception as e:
             logger.warning(f'[alarms] user eval failed tg={telegram_id} email={email}: {e}')
         # Circuit-breaker: stop the whole pass once the real-send cap is hit.
@@ -559,11 +612,89 @@ async def run_pass(bot, *, dry_run: Optional[bool] = None, limit: int = 0) -> di
             await asyncio.sleep(ALARM_SEND_DELAY)
 
     counters['dry_run'] = dry_run
-    counters['test_chat'] = ALARM_TEST_CHAT_ID or None
+    counters['test_chat'] = _TEST_CHAT_IDS or None
     counters['rules_total'] = len(rules)
     counters['rules_by_type'] = {tt: len(rs) for tt, rs in rules_by_type.items()}
     logger.warning(f'[alarms] pass done: {counters}')
     return counters
+
+
+# ─── report / preview (no real sends) ──────────────────────────────────────────
+
+async def run_preview(bot, recipients: list[int]) -> dict:
+    """Report-only run for testers. Evaluates the WHOLE audience WITHOUT sending
+    to real users and WITHOUT mutating the snapshot, then sends each recipient a
+    detailed report + one sample of every enabled alarm's message. So `recipients`
+    (you + the tester) are the ONLY people who get anything."""
+    if not ALARMS_ENABLED:
+        return {'enabled': False, 'note': 'ALARMS_ENABLED=false'}
+    recipients = [int(r) for r in (recipients or []) if r]
+    if not recipients:
+        return {'enabled': True, 'note': 'не заданы получатели (ALARM_TEST_CHAT_ID пуст)'}
+
+    rules = await asyncio.to_thread(_q_load_rules)
+    if not rules:
+        return {'enabled': True, 'note': 'нет включённых алармов в панели'}
+
+    rules_by_type: dict = {}
+    for r in rules:
+        rules_by_type.setdefault(r['trigger_type'], []).append(r)
+
+    audience = await asyncio.to_thread(_q_audience, 0)  # ALL — read-only, no sends
+
+    # Aggregate per rule: how many real users match + one example rendered message.
+    agg = {r['id']: {'count': 0, 'recipients': set(), 'example': None} for r in rules}
+
+    async def collect(rule, tg_id, entity_suffix, msg):
+        a = agg[rule['id']]
+        a['count'] += 1
+        a['recipients'].add(tg_id)
+        if a['example'] is None:
+            a['example'] = msg
+
+    for telegram_id, email in audience:
+        try:
+            await _evaluate_user(telegram_id, email, rules_by_type, collect, write_snapshot=False)
+        except Exception as e:
+            logger.warning(f'[alarms] preview eval failed tg={telegram_id}: {e}')
+
+    total_msgs = sum(a['count'] for a in agg.values())
+    uniq_people: set = set()
+    for a in agg.values():
+        uniq_people |= a['recipients']
+
+    enabled_lines, breakdown_lines = [], []
+    for r in rules:
+        lbl = TRIGGER_NAMES.get(r['trigger_type'], r['trigger_type']) + _thr_label(r)
+        enabled_lines.append(f'• {lbl}')
+        breakdown_lines.append(f'• {lbl} → {agg[r["id"]]["count"]} чел.')
+
+    report = (
+        '🧪 <b>ПРЕВЬЮ АЛАРМОВ</b>\n'
+        'Реальным пользователям НИЧЕГО не отправлено.\n\n'
+        f'<b>Включено алармов: {len(rules)}</b>\n' + '\n'.join(enabled_lines) + '\n\n'
+        '<b>Кому ушло БЫ реальным юзерам:</b>\n' + '\n'.join(breakdown_lines) + '\n\n'
+        f'<b>ИТОГО: {total_msgs} сообщений на {len(uniq_people)} уникальных юзеров.</b>\n'
+        f'Проверена аудитория бота: {len(audience)}\n\n'
+        'Ниже — по 1 примеру каждого сообщения 👇'
+    )
+
+    sent_to = []
+    for rid in recipients:
+        try:
+            await bot.send_message(rid, report)
+            for r in rules:
+                sample = agg[r['id']]['example'] or _render(r['message'], _SAMPLE_CTX)
+                await bot.send_message(rid, sample, reply_markup=_build_markup(r['buttons']))
+                if ALARM_SEND_DELAY:
+                    await asyncio.sleep(ALARM_SEND_DELAY)
+            sent_to.append(rid)
+        except Exception as e:
+            logger.warning(f'[alarms] preview report to {rid} failed: {e}')
+
+    return {'preview': True, 'recipients': sent_to, 'audience': len(audience),
+            'total_messages': total_msgs, 'unique_people': len(uniq_people),
+            'rules': len(rules)}
 
 
 # ─── scheduler entrypoint ──────────────────────────────────────────────────────

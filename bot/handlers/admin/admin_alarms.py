@@ -25,6 +25,20 @@ async def run_alarms_cmd(message: Message):
         await message.answer('⚠️ Алармы выключены: ALARMS_ENABLED=false в .env бота.')
         return
 
+    # Report/preview: evaluate everyone, but send NOTHING to real users — only a
+    # detailed report + 1 sample of each message to the test recipients
+    # (ALARM_TEST_CHAT_ID list, or the admin who ran it).
+    if arg in ('report', 'preview', 'отчет', 'отчёт'):
+        recipients = alarms._TEST_CHAT_IDS or [message.from_user.id]
+        await message.answer('⏳ Готовлю отчёт-превью (реальным юзерам ничего не отправляю)…')
+        res = await alarms.run_preview(message.bot, recipients)
+        if res.get('note'):
+            await message.answer(f'ℹ️ {res["note"]}')
+        elif res.get('preview'):
+            await message.answer('✅ Отчёт отправлен получателям: '
+                                 + ', '.join(map(str, res.get('recipients', []))))
+        return
+
     dry_run = None
     if arg in ('dry', 'dryrun', 'dry-run'):
         dry_run = True
