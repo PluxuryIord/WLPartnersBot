@@ -67,9 +67,42 @@ def _increment(action: str, label: str):
         conn.close()
 
 
+def _live_menu_map() -> dict:
+    """{action: label} for the buttons CURRENTLY in the main_menu scenario.
+
+    The menu is admin-editable, so we read the live (cached) scenario instead of
+    trusting a hardcoded list — that way new/renamed buttons are tracked too.
+    Reads only the warm cache (no DB on the hot path); empty → caller falls back
+    to MENU_ACTIONS. url: buttons are skipped (Telegram sends no callback)."""
+    try:
+        from bot.utils import dynamic_kb
+        data = dynamic_kb._cache.get('data')
+        if not data:
+            return {}
+        screen = (data.get('screens') or {}).get('main_menu')
+        if not screen or not screen.get('buttons'):
+            return {}
+        out = {}
+        for key, btn in screen['buttons'].items():
+            if key == '_order' or not isinstance(btn, dict):
+                continue
+            action = (btn.get('action') or '').strip()
+            if not action or action.startswith('url:'):
+                continue
+            if action.startswith('callback:'):
+                action = action[9:]
+            out[action] = (btn.get('label') or action).strip()
+        return out
+    except Exception:
+        return {}
+
+
 async def track(action: str) -> None:
-    """Increment the counter for a main-menu action. No-op for any other callback."""
-    label = MENU_ACTIONS.get(action)
+    """Increment the counter for a main-menu button. No-op for any other callback.
+    Uses the LIVE main_menu scenario (so all current buttons count), falling back
+    to the hardcoded MENU_ACTIONS when the scenario isn't loaded."""
+    actions = _live_menu_map() or MENU_ACTIONS
+    label = actions.get(action)
     if not label:
         return
     try:
