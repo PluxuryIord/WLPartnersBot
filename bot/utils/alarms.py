@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import os
 import json
+import time
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
@@ -142,11 +143,13 @@ def _thr_label(rule: dict) -> str:
 
 # ─── blocking SQL (own short-lived connection, run via asyncio.to_thread) ─────
 
-def _q_load_rules() -> list[dict]:
-    """Read enabled rules from wl_alarm_rules_v2 (owned by the panel). Many rules
+def _q_load_rules(enabled_only: bool = True) -> list[dict]:
+    """Read rules from wl_alarm_rules_v2 (owned by the panel). Many rules
     per trigger_type are allowed — a drip, e.g. email-unconfirmed at 3 days AND
     at 7 days. Tolerates a missing table → []. Each item:
-      {id, trigger_type, threshold_seconds, message, buttons}."""
+      {id, trigger_type, enabled, threshold_seconds, message, buttons}.
+    enabled_only=True (the engine default) skips disabled rules; the panel's
+    count-preview passes False to size every rule, on or off."""
     out: list[dict] = []
     conn = mysql_engine.raw_connection()
     try:
@@ -166,7 +169,7 @@ def _q_load_rules() -> list[dict]:
 
     for row in rows:
         r = dict(zip(cols, row))
-        if not r.get('enabled'):
+        if enabled_only and not r.get('enabled'):
             continue
         tt = r.get('trigger_type')
         if tt not in TRIGGER_TYPES:
@@ -185,6 +188,7 @@ def _q_load_rules() -> list[dict]:
         out.append({
             'id': r.get('id'),
             'trigger_type': tt,
+            'enabled': bool(r.get('enabled')),
             'threshold_value': val,
             'threshold_unit': unit if val is not None else None,
             'threshold_seconds': thr_seconds,
@@ -463,7 +467,8 @@ async def _clicks_since(uid, created) -> int:
 # ─── per-user evaluation ───────────────────────────────────────────────────────
 
 async def _evaluate_user(telegram_id: int, email: str, rules_by_type: dict,
-                         on_fire, *, write_snapshot: bool = True) -> None:
+                         on_fire, *, write_snapshot: bool = True,
+                         resolve_reason: bool = True) -> None:
     """Evaluate one user against the rules. For every rule that fires, calls
     `on_fire(rule, telegram_id, entity_suffix, rendered_message)`. The caller
     decides what to do: actually send (run_pass) or just collect (run_preview).
@@ -528,7 +533,9 @@ async def _evaluate_user(telegram_id: int, email: str, rules_by_type: dict,
         for site in snaps['rejected']:
             wid = site.get('id')
             reason = (site.get('rejectionReasonComment') or '').strip()
-            if not reason and any('{reason}' in r['message'] for r in rej_rules):
+            # The count-preview only tallies who matches — it doesn't render
+            # messages, so skip the per-site live-API reason lookup there.
+            if not reason and resolve_reason and any('{reason}' in r['message'] for r in rej_rules):
                 reason = await _fetch_reject_reason(uid, email, wid)
             ctx = {'first_name': first_name, 'reason': reason or '—',
                    'site_name': site.get('name'), 'site_url': site.get('url')}
@@ -695,6 +702,80 @@ async def run_preview(bot, recipients: list[int]) -> dict:
     return {'preview': True, 'recipients': sent_to, 'audience': len(audience),
             'total_messages': total_msgs, 'unique_people': len(uniq_people),
             'rules': len(rules)}
+
+
+# ─── count preview (no sends, used by the admin panel) ──────────────────────────
+
+# The panel polls this; computing it walks the whole audience, so cache the last
+# result briefly. Lives in whatever process calls count_matches() (the admin_api
+# bridge), separate from the live bot's scheduler.
+_COUNT_TTL_SEC = 300
+_count_cache: dict = {'mono': 0.0, 'data': None}
+
+
+async def count_matches(force: bool = False, concurrency: int = 8) -> dict:
+    """Read-only preview for the admin panel: for EVERY rule (enabled or not)
+    count how many of the bot's logged-in, non-banned users currently match.
+    Sends nothing and never mutates the snapshot. Counts are UNIQUE USERS per
+    rule (a user with two stuck sites counts once for one moderation rule).
+
+    Result shape:
+      {'rules': {str(rule_id): users}, 'by_type': {trigger_type: users},
+       'audience': int, 'rules_total': int, 'cached': bool}
+
+    ⚠️ Transition triggers (site_approved / site_rejected) fire on a status
+    *change* diffed against the snapshot. In this read-only mode their count is
+    "changes still pending right now" (usually ~0), not a steady population —
+    the panel labels these as event-based.
+
+    Cached for _COUNT_TTL_SEC; pass force=True to recompute now."""
+    now = time.monotonic()
+    cached = _count_cache['data']
+    if not force and cached is not None and (now - _count_cache['mono']) < _COUNT_TTL_SEC:
+        return {**cached, 'cached': True}
+
+    rules = await asyncio.to_thread(_q_load_rules, False)  # ALL rules, on or off
+    if not rules:
+        result = {'rules': {}, 'by_type': {}, 'audience': 0, 'rules_total': 0}
+        _count_cache.update(mono=now, data=result)
+        return {**result, 'cached': False}
+
+    rules_by_type: dict = {}
+    for r in rules:
+        rules_by_type.setdefault(r['trigger_type'], []).append(r)
+
+    audience = await asyncio.to_thread(_q_audience, 0)  # everyone — read-only
+
+    per_rule_users = {r['id']: set() for r in rules}
+    per_type_users = {tt: set() for tt in rules_by_type}
+
+    async def collect(rule, tg_id, entity_suffix, msg):
+        # Pure in-loop set mutation (no await) → safe under cooperative scheduling.
+        per_rule_users[rule['id']].add(tg_id)
+        per_type_users[rule['trigger_type']].add(tg_id)
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(tg_id, email):
+        async with sem:
+            try:
+                await _evaluate_user(tg_id, email, rules_by_type, collect,
+                                     write_snapshot=False, resolve_reason=False)
+            except Exception as e:
+                logger.warning(f'[alarms] count eval failed tg={tg_id}: {e}')
+
+    await asyncio.gather(*(one(tg, em) for tg, em in audience))
+
+    result = {
+        'rules': {str(rid): len(s) for rid, s in per_rule_users.items()},
+        'by_type': {tt: len(s) for tt, s in per_type_users.items()},
+        'audience': len(audience),
+        'rules_total': len(rules),
+    }
+    _count_cache.update(mono=now, data=result)
+    logger.info(f'[alarms] count preview: audience={len(audience)} '
+                f'by_type={result["by_type"]}')
+    return {**result, 'cached': False}
 
 
 # ─── scheduler entrypoint ──────────────────────────────────────────────────────

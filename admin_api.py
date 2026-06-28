@@ -435,6 +435,22 @@ async def event_merch_given(request):
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
 
+# ── GET /alarms/counts ────────────────────────────────────────────────────────
+
+async def get_alarm_counts(request):
+    """How many logged-in users currently match each alarm rule (enabled or not).
+    Read-only preview — sends nothing, never touches the snapshot. Cached in the
+    engine for a few minutes; ?force=1 recomputes now. Used by the panel's
+    «Алармы» tab to show the audience size of every trigger before it's armed."""
+    force = request.rel_url.query.get('force', '').lower() in ('1', 'true', 'yes')
+    try:
+        from bot.utils import alarms
+        data = await alarms.count_matches(force=force)
+        return cors_headers(web.json_response(data))
+    except Exception as e:
+        return cors_headers(web.json_response({'error': str(e)}, status=500))
+
+
 # ── POST /telegram/relay ─────────────────────────────────────────────────────
 
 async def telegram_relay(request):
@@ -520,6 +536,7 @@ def make_app():
     app.router.add_post('/broadcasts', send_broadcast)
     app.router.add_post('/auth', auth_user)
     app.router.add_get('/reload-texts', reload_texts)
+    app.router.add_get('/alarms/counts', get_alarm_counts)
     app.router.add_post('/event/merch-given', event_merch_given)
     app.router.add_post('/telegram/relay', telegram_relay)
     return app
