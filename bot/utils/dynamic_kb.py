@@ -53,6 +53,8 @@ def get_screen_kb(screen_id, extra_buttons=None, cols=1):
         if action.startswith('url:'):
             url = action[4:]
             buttons.append([label, 'url', url])
+        elif action.startswith('web_app:'):
+            buttons.append([label, 'web_app', action[8:]])
         elif action.startswith('callback:'):
             cb = action[9:]
             buttons.append([label, 'call', cb])
@@ -93,6 +95,8 @@ def get_screen_kb_filtered(screen_id, extra_buttons=None, skip_actions=None, col
 
         if action.startswith('url:'):
             buttons.append([label, 'url', action[4:]])
+        elif action.startswith('web_app:'):
+            buttons.append([label, 'web_app', action[8:]])
         elif action.startswith('callback:'):
             buttons.append([label, 'call', action[9:]])
         else:

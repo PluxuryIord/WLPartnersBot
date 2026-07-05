@@ -42,6 +42,18 @@ async def main() -> None:
     # Set Bot Default Commands
     await set_menu_commands(bot)
 
+    # Chat menu button → Mini App (non-fatal if the URL isn't configured yet)
+    try:
+        import os as _os
+        _miniapp_url = _os.getenv('MINIAPP_URL', '').strip()
+        if _miniapp_url:
+            from aiogram.types import MenuButtonWebApp, WebAppInfo
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text='Приложение', web_app=WebAppInfo(url=_miniapp_url))
+            )
+    except Exception as _e:
+        logging.warning(f'[miniapp] set_chat_menu_button failed: {_e}')
+
     # Scheduler Tasks
     await start_scheduler_tasks()
 

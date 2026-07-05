@@ -87,7 +87,8 @@ def _live_menu_map() -> dict:
             if key == '_order' or not isinstance(btn, dict):
                 continue
             action = (btn.get('action') or '').strip()
-            if not action or action.startswith('url:'):
+            # url:/web_app: buttons never produce a callback — nothing to track
+            if not action or action.startswith('url:') or action.startswith('web_app:'):
                 continue
             if action.startswith('callback:'):
                 action = action[9:]

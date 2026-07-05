@@ -183,8 +183,16 @@ async def send_broadcast(request):
 
 # ── Telegram helpers ──────────────────────────────────────────────────────────
 
+# Mini App URL — the «Открыть приложение» web_app button. Empty env = button is
+# NOT added (don't show a dead button before the subdomain is live). Keep in
+# sync with the scenario main_menu btn_webapp (panel scenarios.js migration).
+MINIAPP_URL = env.str('MINIAPP_URL', '').strip()
+_MINIAPP_ROW = ([[{'text': '📱 Открыть приложение', 'web_app': {'url': MINIAPP_URL}}]]
+                if MINIAPP_URL else [])
+
 AUTHORIZED_KEYBOARD = {
     'inline_keyboard': [
+        *_MINIAPP_ROW,
         [{'text': 'База знаний', 'callback_data': 'client_knowledge_base'}],
         [{'text': 'Офферы', 'callback_data': 'client_offers'}],
         [{'text': 'Социальные сети', 'callback_data': 'client_socials'}],
@@ -197,6 +205,7 @@ AUTHORIZED_KEYBOARD = {
 
 AUTHORIZED_KEYBOARD_ADMIN = {
     'inline_keyboard': [
+        *_MINIAPP_ROW,
         [{'text': 'База знаний', 'callback_data': 'client_knowledge_base'}],
         [{'text': 'Офферы', 'callback_data': 'client_offers'}],
         [{'text': 'Социальные сети', 'callback_data': 'client_socials'}],
