@@ -162,3 +162,4 @@ files/
 *.bak
 texts_cache.json
 *.bak*
+.DS_Store
