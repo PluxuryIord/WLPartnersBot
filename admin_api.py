@@ -435,6 +435,50 @@ async def event_merch_given(request):
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
 
+# ── POST /logout ──────────────────────────────────────────────────────────────
+
+async def logout_user(request):
+    """Log a user out (called by the Mini App). Mirrors the bot's client_logout:
+    deletes the user_auth row, replaces the menu message with the guest menu."""
+    try:
+        body = await request.json()
+    except Exception:
+        return cors_headers(web.json_response({'error': 'Invalid JSON'}, status=400))
+
+    try:
+        user_id = int(body.get('user_id') or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    if not user_id:
+        return cors_headers(web.json_response({'error': 'user_id is required'}, status=400))
+
+    def _delete_auth():
+        existing = DB.UserAuth.select(user_id)
+        if not existing:
+            return False
+        DB.UserAuth.remove(user_id)
+        return True
+
+    try:
+        had_auth = await asyncio.to_thread(_delete_auth)
+
+        # Refresh the user's chat: drop old menu message, send the start menu.
+        try:
+            async with _telegram_session(timeout_sec=30) as tg_session:
+                user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
+                if user_data and user_data.menu_id:
+                    await tg_delete_message(tg_session, user_id, user_data.menu_id)
+                new_msg_id = await tg_send_guest_menu(tg_session, user_id)
+                if new_msg_id:
+                    await asyncio.to_thread(lambda: DB.User.update(mark=user_id, menu_id=new_msg_id))
+        except Exception:
+            pass  # logout itself succeeded; menu refresh is best-effort
+
+        return cors_headers(web.json_response({'ok': True, 'had_auth': had_auth}))
+    except Exception as e:
+        return cors_headers(web.json_response({'error': str(e)}, status=500))
+
+
 # ── GET /alarms/counts ────────────────────────────────────────────────────────
 
 async def get_alarm_counts(request):
@@ -535,6 +579,7 @@ def make_app():
     app.router.add_get('/broadcasts', get_broadcasts)
     app.router.add_post('/broadcasts', send_broadcast)
     app.router.add_post('/auth', auth_user)
+    app.router.add_post('/logout', logout_user)
     app.router.add_get('/reload-texts', reload_texts)
     app.router.add_get('/alarms/counts', get_alarm_counts)
     app.router.add_post('/event/merch-given', event_merch_given)
