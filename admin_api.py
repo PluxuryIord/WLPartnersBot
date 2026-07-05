@@ -495,6 +495,100 @@ async def get_alarm_counts(request):
         return cors_headers(web.json_response({'error': str(e)}, status=500))
 
 
+# ── Mini App: partner stats (reads ONLY the wl_admon mirror) ─────────────────
+
+async def _resolve_partner(tg_user_id: int):
+    """tg id → (email from user_auth) → wl_admon user id. Returns (uid, email)
+    or (None, error_response)."""
+    auth = await asyncio.to_thread(lambda: DB.UserAuth.select(tg_user_id))
+    email = (getattr(auth, 'email', '') or '').strip().lower() if auth else ''
+    if not email:
+        return None, cors_headers(web.json_response({'error': 'not_authorized'}, status=404))
+    from bot.integrations.winline import db_admon
+    profile = await db_admon.get_user_by_email(email)
+    if not profile or not profile.get('id'):
+        return None, cors_headers(web.json_response({'error': 'not_in_mirror'}, status=404))
+    return {'uid': int(profile['id']), 'email': email}, None
+
+
+async def miniapp_stats_summary(request):
+    """GET /miniapp/stats/summary?tg_user_id= — totals for yesterday / last
+    calendar week / last calendar month (same period logic the bot shows)."""
+    try:
+        tg_user_id = int(request.rel_url.query.get('tg_user_id') or 0)
+    except ValueError:
+        tg_user_id = 0
+    if not tg_user_id:
+        return cors_headers(web.json_response({'error': 'tg_user_id required'}, status=400))
+
+    who, err = await _resolve_partner(tg_user_id)
+    if err:
+        return err
+
+    from bot.integrations.winline import db_admon
+    from bot.integrations.winline.api import get_period_range
+
+    periods = {}
+    labels = {}
+    names = ('yesterday', 'week', 'month')
+    ranges = {}
+    for p in names:
+        start_iso, end_iso, label = get_period_range(p)
+        ranges[p] = (start_iso, end_iso)
+        labels[p] = label
+    results = await asyncio.gather(
+        *(db_admon.get_user_stats(who['uid'], *ranges[p]) for p in names),
+        return_exceptions=True,
+    )
+    for p, r in zip(names, results):
+        periods[p] = r if isinstance(r, dict) else None
+
+    return cors_headers(web.json_response({
+        'email': who['email'],
+        'periods': periods,
+        'labels': labels,
+    }))
+
+
+async def miniapp_stats_daily(request):
+    """GET /miniapp/stats/daily?tg_user_id=&start=YYYY-MM-DD&end=YYYY-MM-DD —
+    dense per-day series (≤92 days) + totals computed by the same rules."""
+    q = request.rel_url.query
+    try:
+        tg_user_id = int(q.get('tg_user_id') or 0)
+    except ValueError:
+        tg_user_id = 0
+    start = (q.get('start') or '')[:10]
+    end = (q.get('end') or '')[:10]
+    if not tg_user_id or not start or not end:
+        return cors_headers(web.json_response({'error': 'tg_user_id, start, end required'}, status=400))
+
+    from datetime import date as _d
+    try:
+        sd, ed = _d.fromisoformat(start), _d.fromisoformat(end)
+    except ValueError:
+        return cors_headers(web.json_response({'error': 'bad dates'}, status=400))
+    if ed < sd:
+        return cors_headers(web.json_response({'error': 'end before start'}, status=400))
+    if (ed - sd).days > 92:
+        return cors_headers(web.json_response({'error': 'range too long (max 92 days)'}, status=400))
+
+    who, err = await _resolve_partner(tg_user_id)
+    if err:
+        return err
+
+    from bot.integrations.winline import db_admon
+    days, totals = await asyncio.gather(
+        db_admon.get_user_stats_daily(who['uid'], start, end),
+        db_admon.get_user_stats(who['uid'], start, end),
+    )
+    return cors_headers(web.json_response({
+        'email': who['email'],
+        'days': days or [],
+        'totals': totals or {},
+    }))
+
+
 # ── POST /telegram/relay ─────────────────────────────────────────────────────
 
 async def telegram_relay(request):
@@ -582,6 +676,8 @@ def make_app():
     app.router.add_post('/logout', logout_user)
     app.router.add_get('/reload-texts', reload_texts)
     app.router.add_get('/alarms/counts', get_alarm_counts)
+    app.router.add_get('/miniapp/stats/summary', miniapp_stats_summary)
+    app.router.add_get('/miniapp/stats/daily', miniapp_stats_daily)
     app.router.add_post('/event/merch-given', event_merch_given)
     app.router.add_post('/telegram/relay', telegram_relay)
     return app

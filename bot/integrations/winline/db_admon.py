@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import date as _date, datetime
+from datetime import date as _date, datetime, timedelta
 from typing import Optional
 from urllib.parse import quote_plus
 
@@ -222,6 +222,95 @@ async def _stats_from_conversions(email: str, start_d: _date, end_d: _date) -> t
         if d:
             covered.add(d.isoformat() if isinstance(d, _date) else str(d)[:10])
     return out, covered
+
+
+async def get_user_stats_daily(user_id: int, start_iso: str, end_iso: str) -> Optional[list]:
+    """Per-day breakdown for the same period, same merge rules as
+    get_user_stats (so sum(daily) == period totals):
+      - goals & rewards per date from conversions (primary)
+      - stats_group_by fills goals/rewards ONLY for dates conversions missed
+      - clicks are ALWAYS from stats_group_by
+    Returns a dense series [{date:'YYYY-MM-DD', clicks, goal11Quantity, ...}, ...]
+    covering every date in the range (zeros where no data)."""
+    try:
+        start_d = datetime.fromisoformat(start_iso.replace('Z', '+00:00')[:10]).date()
+        end_d = datetime.fromisoformat(end_iso.replace('Z', '+00:00')[:10]).date()
+    except Exception:
+        return None
+    if end_d < start_d:
+        return None
+
+    def _blank():
+        return {'clicks': 0, 'goal11Quantity': 0, 'goal12Quantity': 0, 'goal13Quantity': 0,
+                'rewardConfirmed': 0, 'rewardCreated': 0, 'rewardCanceled': 0}
+
+    days: dict[str, dict] = {}
+    d = start_d
+    while d <= end_d:
+        days[d.isoformat()] = _blank()
+        d += timedelta(days=1)
+
+    # 1) conversions per date (primary for goals/rewards)
+    covered: set[str] = set()
+    email = await _user_id_to_email(user_id)
+    if email:
+        try:
+            rows = await asyncio.to_thread(
+                _fetchall,
+                "SELECT date, goal, status, reward FROM wl_admon_conversions "
+                "WHERE partner_email=%s AND date BETWEEN %s AND %s",
+                (email, start_d, end_d),
+            )
+            for r in rows or []:
+                dt = r.get('date')
+                key = dt.isoformat() if isinstance(dt, _date) else str(dt)[:10]
+                day = days.get(key)
+                if day is None:
+                    continue
+                covered.add(key)
+                goal = r.get('goal') or ''
+                if goal == 'goal11': day['goal11Quantity'] += 1
+                elif goal == 'goal12': day['goal12Quantity'] += 1
+                elif goal == 'goal13': day['goal13Quantity'] += 1
+                bucket = _STATUS_TO_BUCKET.get(r.get('status'))
+                if bucket:
+                    day[bucket] += int(r.get('reward') or 0)
+        except Exception as e:
+            logger.warning(f'[db_admon] daily conversions failed: {e}')
+
+    # 2) stats_group_by per date: clicks always; goals/rewards only for gaps.
+    try:
+        rows = await asyncio.to_thread(
+            _fetchall,
+            "SELECT datetz, COALESCE(SUM(clicks),0) AS c, "
+            "COALESCE(SUM(goal11_quantity),0) AS g11, "
+            "COALESCE(SUM(goal12_quantity),0) AS g12, "
+            "COALESCE(SUM(goal13_quantity),0) AS g13, "
+            "COALESCE(SUM(reward_confirmed),0) AS rc, "
+            "COALESCE(SUM(reward_created),0)   AS rcr, "
+            "COALESCE(SUM(reward_canceled),0)  AS rcn "
+            "FROM wl_admon_stats_group_by "
+            "WHERE user_id=%s AND datetz BETWEEN %s AND %s GROUP BY datetz",
+            (int(user_id), start_d, end_d),
+        )
+        for r in rows or []:
+            dt = r.get('datetz')
+            key = dt.isoformat() if isinstance(dt, _date) else str(dt)[:10]
+            day = days.get(key)
+            if day is None:
+                continue
+            day['clicks'] += int(r.get('c') or 0)
+            if key not in covered:
+                day['goal11Quantity'] += int(r.get('g11') or 0)
+                day['goal12Quantity'] += int(r.get('g12') or 0)
+                day['goal13Quantity'] += int(r.get('g13') or 0)
+                day['rewardConfirmed'] += int(r.get('rc') or 0)
+                day['rewardCreated']   += int(r.get('rcr') or 0)
+                day['rewardCanceled']  += int(r.get('rcn') or 0)
+    except Exception as e:
+        logger.warning(f'[db_admon] daily group_by failed: {e}')
+
+    return [{'date': k, **v} for k, v in sorted(days.items())]
 
 
 async def get_user_stats(user_id: int, start_iso: str, end_iso: str) -> Optional[dict]:
