@@ -538,6 +538,8 @@ async def _after_email_confirmed(user_id: int, email: str, menu_msg, state: FSMC
         else:
             DB.UserAuth.add(user_id, email, token=None)
         DB.User.update(user_id, registered=True)
+        from bot.utils import partner_tags
+        await partner_tags.retag_after_login(user_id, email)
     except Exception as e:
         logger.warning(f'[event_v2] save auth failed: {e}')
 

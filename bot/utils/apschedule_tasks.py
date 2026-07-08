@@ -11,6 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.initialization.bot_texts import bot_texts
 from bot.utils import dynamic_kb
 from bot.utils import alarms
+from bot.utils import partner_tags
 
 
 async def start_scheduler_tasks():
@@ -29,4 +30,12 @@ async def start_scheduler_tasks():
                            misfire_grace_time=300)
         logging.warning(f'[alarms] scheduled every {alarms.ALARM_INTERVAL_SEC}s '
                         f'(dry_run={alarms.ALARMS_DRY_RUN}, test_chat={alarms.ALARM_TEST_CHAT_ID or None})')
+    # Partner status tags — keep panel tags in sync with the wl_admon mirror
+    # (mirror itself refreshes every ~10 min). Same anti-overlap guards.
+    if partner_tags.PARTNER_TAGS_ENABLED:
+        schedulers.add_job(partner_tags.scheduled_retag, 'interval',
+                           seconds=partner_tags.PARTNER_TAGS_INTERVAL_SEC,
+                           max_instances=1, coalesce=True,
+                           misfire_grace_time=300)
+        logging.warning(f'[partner_tags] scheduled every {partner_tags.PARTNER_TAGS_INTERVAL_SEC}s')
     schedulers.start()

@@ -632,9 +632,10 @@ async def _finalize_auth(user_id: int, email: str, menu_msg, state: FSMContext):
         DB.UserAuth.add(user_id, email, token=None)
     DB.User.update(user_id, registered=True)
 
-    # Auto-assign "Партнёр" tag + remove "Старый пользователь" in admin panel (non-blocking)
+    # Status tag («Партнёр действующий/на модерации/…» by mirror data) + drop
+    # "Старый пользователь" in admin panel (non-blocking)
     try:
-        def _update_partner_tags(uid):
+        def _drop_old_user_tag(uid):
             _cfg = {
                 'host': os.getenv('MYSQL_HOST', ''), 'port': int(os.getenv('MYSQL_PORT', 3306)),
                 'user': os.getenv('MYSQL_USER', ''), 'password': os.getenv('MYSQL_PASSWORD', ''),
@@ -644,10 +645,6 @@ async def _finalize_auth(user_id: int, email: str, menu_msg, state: FSMContext):
             try:
                 cur = c.cursor()
                 cur.execute(
-                    'INSERT IGNORE INTO wl_admin_user_tags (user_id, tag) VALUES (%s, %s)',
-                    (uid, 'Партнёр'),
-                )
-                cur.execute(
                     'DELETE FROM wl_admin_user_tags WHERE user_id = %s AND tag = %s',
                     (uid, 'Старый пользователь'),
                 )
@@ -655,7 +652,9 @@ async def _finalize_auth(user_id: int, email: str, menu_msg, state: FSMContext):
             finally:
                 try: c.close()
                 except Exception: pass
-        await asyncio.to_thread(_update_partner_tags, user_id)
+        await asyncio.to_thread(_drop_old_user_tag, user_id)
+        from bot.utils import partner_tags
+        await partner_tags.retag_after_login(user_id, email)
     except Exception as _e:
         logger.warning(f'[partner_tag] Failed for user {user_id}: {_e}')
 

@@ -330,6 +330,13 @@ async def auth_user(request):
 
     await asyncio.to_thread(_save_auth)
 
+    # Status tag by mirror data (best-effort, mini app logins included)
+    try:
+        from bot.utils import partner_tags
+        await partner_tags.retag_after_login(user_id, email)
+    except Exception:
+        pass
+
     try:
         async with aiohttp.ClientSession() as tg_session:
             user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
