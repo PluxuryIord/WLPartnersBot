@@ -3,9 +3,26 @@ AUTHOR CODE - V1N3R
 TG: @v1n3r
 Site Company: buy-bot.ru
 """
+import os
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from bot.utils.telegram import create_inline, kb_delete_message
 from bot.utils.dynamic_kb import get_screen_kb
+
+
+def _miniapp_url():
+    """Rollout switch. When MINIAPP_URL is set, the whole bot funnels into the
+    Web App: menus collapse to just «Открыть приложение» (+ admin menu)."""
+    return os.getenv('MINIAPP_URL', '').strip()
+
+
+def get_miniapp_only_menu(is_admin=False):
+    url = _miniapp_url()
+    buttons = []
+    if url:
+        buttons.append(['🚀 Открыть приложение', 'web_app', url])
+    if is_admin:
+        buttons.append(['⚙️ Меню администратора', 'call', 'admin_menu'])
+    return create_inline(buttons, 1)
 
 
 def _kb_or_fallback(screen_id, fallback_buttons, extra=None, cols=1):
@@ -31,6 +48,8 @@ registration_button = create_inline([['Зарегистрироваться', 'c
 
 
 def get_start_menu(is_admin=False):
+    if _miniapp_url():
+        return get_miniapp_only_menu(is_admin)
     extra = [['⚙️ Меню администратора', 'call', 'admin_menu']] if is_admin else None
     return _kb_or_fallback('start_menu', [
         ['Я уже являюсь партнёром', 'call', 'client_existing_partner'],
@@ -76,6 +95,8 @@ auth_menu = create_inline([
 
 
 def get_authorized_menu(is_admin=False, event_active=False, user_id=None):
+    if _miniapp_url():
+        return get_miniapp_only_menu(is_admin)
     from bot.utils.dynamic_kb import get_screen_kb_filtered
     from bot.integrations.ai.knowledge_assistant import is_user_allowed
 

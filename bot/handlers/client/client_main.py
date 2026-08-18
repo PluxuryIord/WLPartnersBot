@@ -127,10 +127,9 @@ async def main_menu(update: Union[Message, CallbackQuery],
         # deep-link (t.me/<bot>?start=event), это обрабатывается в start_command.
         kb = kb_client_menu.get_start_menu(is_admin)
         caption_text = get_text('start_menu', 'welcome', name=update.from_user.first_name) or (
-            f'<b>Привет, {update.from_user.first_name}! '
-            'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-            'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+            f'<b>Привет, {update.from_user.first_name}!</b>\n\n'
+            'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
+            'свою статистику, получать новости и предложения.')
         await wait_registration.delete()
         new_menu_id = await wait_registration.answer_photo(
             caption=caption_text,
@@ -170,10 +169,9 @@ async def main_menu(update: Union[Message, CallbackQuery],
                 # Not authorized → show start menu (event flow only via deep-link)
                 kb = kb_client_menu.get_start_menu(is_admin)
                 caption_text = get_text('start_menu', 'welcome', name=user.first_name) or (
-                    f'<b>Привет, {user.first_name}! '
-                    'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-                    'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-                    'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+                    f'<b>Привет, {user.first_name}!</b>\n\n'
+                    'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
+                    'свою статистику, получать новости и предложения.')
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=caption_text,
@@ -260,10 +258,10 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
         except TelegramAPIError:
             ...
         kb = kb_client_menu.get_start_menu(is_admin)
-        caption_text = get_text('start_menu', 'welcome') or (
-            '<b>Привет! Этот бот поможет тебе зарегистрироваться в качестве партнёра, '
-            'предоставит быстрый доступ к порталу WINLINE PARTNERS, даст возможность получать '
-            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>')
+        caption_text = get_text('start_menu', 'welcome', name=call.from_user.first_name) or (
+            f'<b>Привет, {call.from_user.first_name}!</b>\n\n'
+            'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
+            'свою статистику, получать новости и предложения.')
         new_menu = await bot.send_photo(
             chat_id=call.from_user.id,
             caption=caption_text,
@@ -414,10 +412,9 @@ async def wait_traff(call: CallbackQuery, state: FSMContext):
 async def back_to_start(call: CallbackQuery):
     await call.message.edit_caption(
         caption=get_text('start_menu', 'welcome', name=call.from_user.first_name) or (
-            f'<b>Привет, {call.from_user.first_name}! '
-            'Этот бот поможет тебе зарегистрироваться в качестве партнёра '
-            'в нашей партнерской программе WINLINE PARTNERS, даст возможность получать '
-            'актуальные новости и предложения, а также участвовать в мероприятиях!</b>'),
+            f'<b>Привет, {call.from_user.first_name}!</b>\n\n'
+            'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
+            'свою статистику, получать новости и предложения.'),
         reply_markup=kb_client_menu.get_start_menu())
     await call.answer()
 
