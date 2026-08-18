@@ -9,7 +9,7 @@ from aiogram import Dispatcher, BaseMiddleware
 from bot.handlers import initialization_handlers
 from bot.initialization import config
 from bot.middlewares import ThrottlingMiddleware, IsBanned, ServiceFilter, IsHaveGroup, TechnicalWorks
-from bot.middlewares import UserData, AlbumMiddleware, MenuClickTracker
+from bot.middlewares import UserData, AlbumMiddleware, MenuClickTracker, LegacyClientGuard
 
 
 def register_middleware(dp: Dispatcher, middleware: BaseMiddleware, message: bool = False,
@@ -30,6 +30,8 @@ def dispatcher_register_modules(dp: Dispatcher):
     register_middleware(dp, TechnicalWorks(), True, True)
     register_middleware(dp, UserData(), True, True, True)
     register_middleware(dp, AlbumMiddleware(config.album), True)
+    # Seal off legacy client buttons lingering in old menu messages (callback-only).
+    register_middleware(dp, LegacyClientGuard(), False, True, False)
     register_middleware(dp, MenuClickTracker(), False, True, False)
 
     initialization_handlers(dp)

@@ -1,5 +1,6 @@
 from .IsBanned import IsBanned
 from .IsHaveGroup import IsHaveGroup
+from .LegacyClientGuard import LegacyClientGuard
 from .MediaGroup import AlbumMiddleware
 from .MenuClick import MenuClickTracker
 from .ServiceMessages import ServiceFilter
