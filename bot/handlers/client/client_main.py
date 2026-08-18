@@ -100,6 +100,19 @@ async def check_email_in_iap(email: str) -> dict:
     return {'found': True, 'status': info.get('status'), 'id': info.get('id'), 'name': name}
 
 
+def _welcome_caption(name):
+    """Mini-App-era /start greeting. When MINIAPP_URL is set we FORCE this text
+    and ignore the panel scenario (the whole bot funnels into the Web App);
+    otherwise keep the scenario-editable behaviour."""
+    text = (
+        f'<b>Привет, {name}!</b>\n\n'
+        'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
+        'свою статистику, получать новости и предложения.')
+    if os.getenv('MINIAPP_URL', '').strip():
+        return text
+    return get_text('start_menu', 'welcome', name=name) or text
+
+
 async def main_menu(update: Union[Message, CallbackQuery],
                     user: User,
                     user_data: DB.User | None,
@@ -126,10 +139,7 @@ async def main_menu(update: Union[Message, CallbackQuery],
         # Авто-редирект в S3 убран. В S3 попадают ТОЛЬКО юзеры пришедшие по
         # deep-link (t.me/<bot>?start=event), это обрабатывается в start_command.
         kb = kb_client_menu.get_start_menu(is_admin)
-        caption_text = get_text('start_menu', 'welcome', name=update.from_user.first_name) or (
-            f'<b>Привет, {update.from_user.first_name}!</b>\n\n'
-            'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
-            'свою статистику, получать новости и предложения.')
+        caption_text = _welcome_caption(update.from_user.first_name)
         await wait_registration.delete()
         new_menu_id = await wait_registration.answer_photo(
             caption=caption_text,
@@ -162,16 +172,14 @@ async def main_menu(update: Union[Message, CallbackQuery],
                 kb = kb_client_menu.get_authorized_menu(is_admin, event_active=get_settings_cached().event_starts, user_id=user.id)
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
-                    caption=get_text('auth_flow', 'auth_success', email=auth_data.email) or f'<b>✅ Вы авторизованы</b>{email_text}',
+                    caption=(_welcome_caption(user.first_name) if os.getenv('MINIAPP_URL', '').strip()
+                             else (get_text('auth_flow', 'auth_success', email=auth_data.email) or f'<b>✅ Вы авторизованы</b>{email_text}')),
                     photo='AgACAgIAAxkBAALAumm79aB6UEyMKSwO7Y4CIuK0V2GvAALrGWsbCkPgSa2z0SVvYvJsAQADAgADeQADOgQ',
                     reply_markup=kb)
             else:
                 # Not authorized → show start menu (event flow only via deep-link)
                 kb = kb_client_menu.get_start_menu(is_admin)
-                caption_text = get_text('start_menu', 'welcome', name=user.first_name) or (
-                    f'<b>Привет, {user.first_name}!</b>\n\n'
-                    'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
-                    'свою статистику, получать новости и предложения.')
+                caption_text = _welcome_caption(user.first_name)
                 new_menu_id = await bot.send_photo(
                     chat_id=user.id,
                     caption=caption_text,
@@ -248,7 +256,8 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
             ...
         new_menu = await bot.send_photo(
             chat_id=call.from_user.id,
-            caption=get_text('auth_flow', 'auth_success', email=auth_data.email) or f'<b>✅ Вы авторизованы</b>{email_text}',
+            caption=(_welcome_caption(call.from_user.first_name) if os.getenv('MINIAPP_URL', '').strip()
+                     else (get_text('auth_flow', 'auth_success', email=auth_data.email) or f'<b>✅ Вы авторизованы</b>{email_text}')),
             photo='AgACAgIAAxkBAALAumm79aB6UEyMKSwO7Y4CIuK0V2GvAALrGWsbCkPgSa2z0SVvYvJsAQADAgADeQADOgQ',
             reply_markup=kb)
         DB.User.update(mark=call.from_user.id, menu_id=new_menu.message_id)
@@ -258,10 +267,7 @@ async def back_menu(call: CallbackQuery, state: FSMContext):
         except TelegramAPIError:
             ...
         kb = kb_client_menu.get_start_menu(is_admin)
-        caption_text = get_text('start_menu', 'welcome', name=call.from_user.first_name) or (
-            f'<b>Привет, {call.from_user.first_name}!</b>\n\n'
-            'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
-            'свою статистику, получать новости и предложения.')
+        caption_text = _welcome_caption(call.from_user.first_name)
         new_menu = await bot.send_photo(
             chat_id=call.from_user.id,
             caption=caption_text,
@@ -411,10 +417,7 @@ async def wait_traff(call: CallbackQuery, state: FSMContext):
 
 async def back_to_start(call: CallbackQuery):
     await call.message.edit_caption(
-        caption=get_text('start_menu', 'welcome', name=call.from_user.first_name) or (
-            f'<b>Привет, {call.from_user.first_name}!</b>\n\n'
-            'Добро пожаловать в <b>WINLINE PARTNERS</b>. Здесь ты сможешь отслеживать '
-            'свою статистику, получать новости и предложения.'),
+        caption=_welcome_caption(call.from_user.first_name),
         reply_markup=kb_client_menu.get_start_menu())
     await call.answer()
 
