@@ -337,17 +337,9 @@ async def auth_user(request):
     except Exception:
         pass
 
-    try:
-        async with aiohttp.ClientSession() as tg_session:
-            user_data = await asyncio.to_thread(lambda: DB.User.select(user_id))
-            if user_data and user_data.menu_id:
-                await tg_delete_message(tg_session, user_id, user_data.menu_id)
-            admin_flag = await asyncio.to_thread(lambda: _is_admin(user_id))
-            new_msg_id = await tg_send_authorized_menu(tg_session, user_id, email, is_admin=admin_flag)
-            if new_msg_id:
-                await asyncio.to_thread(lambda: DB.User.update(mark=user_id, menu_id=new_msg_id))
-    except Exception:
-        pass
+    # Mini-App login finalize: do NOT push anything into the user's bot chat.
+    # (Previously sent «✅ Вы авторизованы» here, but the user already logged in
+    # inside the Web App, so the bot message read as a spammy notification.)
 
     return cors_headers(web.json_response({'ok': True, 'email': email}))
 
