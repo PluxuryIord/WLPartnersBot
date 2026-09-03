@@ -670,6 +670,28 @@ async def telegram_relay(request):
         return cors_headers(web.json_response({'ok': False, 'description': f'relay: {e}'}, status=502))
 
 
+async def check_partner(request):
+    """Live-ish partner lookup for the Mini App login. get_user_by_email checks
+    the mirror first and, on a miss (a fresh registration not yet in the daily
+    users snapshot), falls back to the live ADMON GraphQL — a single filtered
+    query, not a full users scan (per ADMON's guidance). Returns found + status."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    email = (body.get('email') or '').strip().lower()
+    if not email:
+        return cors_headers(web.json_response({'error': 'email required'}, status=400))
+    try:
+        from bot.integrations.winline import api as wl_api
+        user = await wl_api.get_user_by_email(email)
+    except Exception as e:
+        return cors_headers(web.json_response({'found': False, 'error': str(e)}, status=200))
+    if not user:
+        return cors_headers(web.json_response({'found': False}))
+    return cors_headers(web.json_response({'found': True, 'status': user.get('status')}))
+
+
 # ── App setup ────────────────────────────────────────────────────────────────
 
 
@@ -682,6 +704,7 @@ def make_app():
     app.router.add_post('/broadcasts', send_broadcast)
     app.router.add_post('/auth', auth_user)
     app.router.add_post('/logout', logout_user)
+    app.router.add_post('/partner/check', check_partner)
     app.router.add_get('/reload-texts', reload_texts)
     app.router.add_get('/alarms/counts', get_alarm_counts)
     app.router.add_get('/miniapp/stats/summary', miniapp_stats_summary)
