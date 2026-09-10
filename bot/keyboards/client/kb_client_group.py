@@ -14,7 +14,7 @@ promo_menu = create_inline([
 ], 1)
 
 calendar_menu = create_inline([
-    ['Открыть календарь', 'url', 'https://docs.google.com/spreadsheets/d/1zMg4sJlUUD2I-SPEUc7MRC6rRkbZHWpBju0vGlzNeIo/edit?gid=0#gid=0'],
+    ['Открыть календарь', 'url', 'https://docs.google.com/spreadsheets/d/1-3zgTAEdvS3QYQIj6xtD1Ofpz3CPI8NB4ShdhXocnD8/edit?gid=1843973382#gid=1843973382'],
     ['🔙 Меню', 'call', 'group_main_menu'],
 ], 1)
 
