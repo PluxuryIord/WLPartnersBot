@@ -11,7 +11,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from bot.handlers.client.client_main import main_menu
+from bot.handlers.client.client_main import main_menu, send_logged_in_autoreply
 from bot.integrations import DB
 from bot.keyboards.admin import kb_admin_support
 from bot.keyboards.client import kb_client_menu
@@ -29,6 +29,10 @@ async def support(call: CallbackQuery, state: FSMContext):
 
 
 async def command_support(message: Message, state: FSMContext, user_data: DB.User):
+    # Mini-App era: a logged-in partner gets the fixed auto-reply instead of the
+    # legacy in-bot support flow.
+    if await send_logged_in_autoreply(message):
+        return
     menu: Message = await main_menu(update=message, user=message.from_user, state=state, user_data=user_data)
     await menu.edit_text('<b>Кратко опишите свой запрос, а я передам его команде поддержки. '
                          'Они обязательно свяжутся с вами!</b>',

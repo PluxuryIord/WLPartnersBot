@@ -113,6 +113,29 @@ def _welcome_caption(name):
     return get_text('start_menu', 'welcome', name=name) or text
 
 
+LOGGED_IN_AUTOREPLY = (
+    'Привет!\n\n'
+    'Этот бот предназначен для отслеживания статистики и получения актуальной '
+    'информации. Если у вас есть другие вопросы — напишите менеджеру @winline_affiliate.'
+)
+
+
+async def send_logged_in_autoreply(message: Message) -> bool:
+    """Mini-App era: a logged-in partner (user_auth row) gets this fixed reply to
+    anything except /start. Private chats only, and only when MINIAPP_URL is set;
+    unauthorised users are untouched. Returns True when the user qualified, so a
+    caller can skip its legacy flow."""
+    if message.chat.type != 'private' or not os.getenv('MINIAPP_URL', '').strip():
+        return False
+    if not DB.UserAuth.select(message.from_user.id):
+        return False
+    try:
+        await message.answer(LOGGED_IN_AUTOREPLY)
+    except TelegramAPIError:
+        pass
+    return True
+
+
 async def main_menu(update: Union[Message, CallbackQuery],
                     user: User,
                     user_data: DB.User | None,

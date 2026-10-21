@@ -147,7 +147,10 @@ async def not_handled_message(message: Message, state: FSMContext,
         if message.text and message.text.lower() in ['старт', 'перезапустить', 'перезапуск', 'начать',
                                                      'запустить', 'запуск', 'start']:
             return await client_main.main_menu(message, message.from_user, user_data, state)
-        elif user_data:
+        # Mini-App era: a logged-in partner gets the fixed auto-reply. The message
+        # is still forwarded to the manager's topic + panel chat below, as before.
+        await client_main.send_logged_in_autoreply(message)
+        if user_data:
             if message.reply_to_message:
                 if message.reply_to_message.from_user.id == message.from_user.id:
                     message_data = DB.ForwardTopicMessages.select(
