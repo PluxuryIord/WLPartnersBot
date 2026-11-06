@@ -512,8 +512,10 @@ async def _resolve_partner(tg_user_id: int):
     email = (getattr(auth, 'email', '') or '').strip().lower() if auth else ''
     if not email:
         return None, cors_headers(web.json_response({'error': 'not_authorized'}, status=404))
-    from bot.integrations.winline import db_admon
-    profile = await db_admon.get_user_by_email(email)
+    # The mirror's users table only holds ADMON's latest hourly delta, so a miss
+    # there is normal — get_user_by_email falls back to the live GraphQL.
+    from bot.integrations.winline import api as wl_api
+    profile = await wl_api.get_user_by_email(email)
     if not profile or not profile.get('id'):
         return None, cors_headers(web.json_response({'error': 'not_in_mirror'}, status=404))
     return {'uid': int(profile['id']), 'email': email}, None
@@ -530,7 +532,7 @@ async def miniapp_stats_summary(request):
         return cors_headers(web.json_response({'error': 'tg_user_id required'}, status=400))
 
     who, err = await _resolve_partner(tg_user_id)
-    if err:
+    if err is not None:
         return err
 
     from bot.integrations.winline import db_admon
@@ -582,7 +584,7 @@ async def miniapp_stats_daily(request):
         return cors_headers(web.json_response({'error': 'range too long (max 92 days)'}, status=400))
 
     who, err = await _resolve_partner(tg_user_id)
-    if err:
+    if err is not None:
         return err
 
     from bot.integrations.winline import db_admon

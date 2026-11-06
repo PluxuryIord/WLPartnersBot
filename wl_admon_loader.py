@@ -77,8 +77,10 @@ S3_PREFIX = (_raw_prefix.rstrip('/') + '/') if _raw_prefix else ''
 INTERVAL_SEC = int(os.getenv('WL_ADMON_LOADER_INTERVAL_SEC', '600') or 600)
 BATCH_SIZE = 1000
 
-SNAPSHOT_TABLES = ('users', 'websites', 'offers')
-INCREMENTAL_TABLES = ('conversions', 'stats_group_by')
+# users: since 2026-11-06 ADMON exports only the users changed within each hour
+# (no full snapshot anymore), so it's upserted by id like the event tables.
+SNAPSHOT_TABLES = ('websites', 'offers')
+INCREMENTAL_TABLES = ('users', 'conversions', 'stats_group_by')
 
 
 def is_configured() -> bool:
@@ -282,7 +284,16 @@ _SQL_USERS = (
     "INSERT INTO wl_admon_users (id, email, role, status, email_confirmed, "
     "first_name, last_name, middle_name, phone, telegram, created_ms, "
     "last_login_ms, credit, debit, manager_email, referrer_email) "
-    "VALUES (%s,%s,%s,%s,%s, %s,%s,%s,%s,%s, %s,%s,%s,%s, %s,%s)"
+    "VALUES (%s,%s,%s,%s,%s, %s,%s,%s,%s,%s, %s,%s,%s,%s, %s,%s) "
+    "ON DUPLICATE KEY UPDATE "
+    "email=VALUES(email), role=VALUES(role), status=VALUES(status), "
+    "email_confirmed=VALUES(email_confirmed), first_name=VALUES(first_name), "
+    "last_name=VALUES(last_name), middle_name=VALUES(middle_name), "
+    "phone=VALUES(phone), telegram=VALUES(telegram), created_ms=VALUES(created_ms), "
+    "last_login_ms=VALUES(last_login_ms), credit=VALUES(credit), debit=VALUES(debit), "
+    # hourly user exports have no manager__email — keep the known value
+    "manager_email=COALESCE(VALUES(manager_email), manager_email), "
+    "referrer_email=COALESCE(VALUES(referrer_email), referrer_email)"
 )
 
 
@@ -399,7 +410,7 @@ _BUILDERS = {
 # ─── Per-table processors ──────────────────────────────────────────────────
 
 def _process_snapshot_table(s3, table: str) -> None:
-    """For snapshot tables (users/websites/offers): if a newer partition exists
+    """For snapshot tables (websites/offers): if a newer partition exists
     in S3 than what's in wl_admon_ingested → TRUNCATE + reload that partition."""
     keys = _list_table_keys(s3, table)
     if not keys:
@@ -432,7 +443,8 @@ def _process_snapshot_table(s3, table: str) -> None:
 
 
 def _process_incremental_table(s3, table: str) -> None:
-    """For conversions/stats_group_by: UPSERT only new s3 keys; old ones merged in place."""
+    """For users/conversions/stats_group_by: UPSERT only new s3 keys, in key
+    (= chronological) order so a later change of the same row wins."""
     keys = _list_table_keys(s3, table)
     if not keys:
         logger.info(f'[{table}] no parquet files in S3, skipping')
